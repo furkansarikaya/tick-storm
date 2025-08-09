@@ -1,0 +1,338 @@
+# ===========================
+# Go Build Artifacts
+# ===========================
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+*.cover
+*.coverprofile
+coverage.txt
+coverage.html
+coverage.xml
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Dependency directories (remove the comment below if using vendor)
+# vendor/
+
+# Go build cache
+/bin/
+/dist/
+/build/
+/target/
+
+# Binary output directories
+tick-storm
+/tick-storm
+cmd/tick-storm/tick-storm
+cmd/*/tick-storm
+
+# ===========================
+# IDE and Editor Files
+# ===========================
+# Windsurf
+.windsurf/
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+.history/
+
+# IntelliJ IDEA / GoLand
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+.idea_modules/
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# Vim
+*.swp
+*.swo
+*~
+.*.swp
+.*.swo
+Session.vim
+.netrwhist
+tags
+
+# Emacs
+*~
+\#*\#
+.\#*
+.emacs.desktop
+.emacs.desktop.lock
+
+# TextMate
+*.tmproj
+*.tmproject
+tmtags
+
+# ===========================
+# OS-Specific Files
+# ===========================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ===========================
+# Security and Sensitive Files
+# ===========================
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.template
+*.env
+env.sh
+
+# Certificates and Keys
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+ca-certificates/
+certs/
+certificates/
+ssl/
+tls/
+
+# Secrets and credentials
+secrets/
+credentials/
+*.secret
+*.secrets
+*.password
+*.passwd
+*.token
+config/secrets.yaml
+config/credentials.yaml
+
+# Private configuration
+config/local.yaml
+config/private.yaml
+config/production.yaml
+!config/example.yaml
+!config/default.yaml
+
+# ===========================
+# Application Specific
+# ===========================
+# Log files
+*.log
+logs/
+log/
+*.log.*
+*.logs
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+cache/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.bolt
+*.leveldb/
+data/
+
+# Profiling files
+*.prof
+*.pprof
+*.heap
+*.allocs
+*.block
+*.mutex
+*.trace
+cpu.prof
+mem.prof
+trace.out
+
+# Benchmark results
+benchmarks/results/
+*.bench
+
+# Generated files
+generated/
+gen/
+*.generated.go
+*.pb.go
+*_gen.go
+mock_*.go
+
+# Documentation build
+docs/_build/
+docs/site/
+site/
+
+# ===========================
+# Testing and CI/CD
+# ===========================
+# Test results
+test-results/
+test-reports/
+*.test.json
+junit.xml
+test.xml
+
+# Integration test data
+testdata/output/
+integration-test-results/
+
+# CI/CD artifacts
+.gitlab-ci-local/
+.github/workflows/local/
+artifacts/
+
+# ===========================
+# Docker and Containers
+# ===========================
+# Docker project files
+docker-compose.override.yml
+.dockerignore.local
+
+# Container data volumes
+volumes/
+docker-volumes/
+
+# ===========================
+# Miscellaneous
+# ===========================
+# Backup files
+*.bak
+*.backup
+*.old
+backup/
+
+# Archive files (unless intentionally committed)
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.rar
+*.7z
+
+# Core dumps
+core
+core.*
+vgcore.*
+
+# Patch files
+*.patch
+*.diff
+
+# Package files
+*.deb
+*.rpm
+*.dmg
+*.iso
+*.jar
+
+# Node modules (if any frontend/tooling)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python virtualenv (if any scripts)
+venv/
+env/
+ENV/
+__pycache__/
+*.pyc
+
+# ===========================
+# Project Specific
+# ===========================
+# Tick-storm specific
+tick-storm-data/
+client-connections/
+stream-cache/
+metrics-export/
+
+# Performance test results
+perf-results/
+load-test-results/
+benchmark-results/
+
+# Local development configs
+config/dev.local.yaml
+config/test.local.yaml
+
+# Deployment artifacts
+deploy/local/
+deploy/staging/
+deploy/production/
+
+# Custom scripts output
+scripts/output/
+scripts/tmp/
+
+# Documentation drafts
+docs/drafts/
+docs/*.draft.md
+
+# Example client implementations (if sensitive)
+examples/private/
+examples/customer-specific/
