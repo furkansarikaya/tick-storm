@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+package tickstorm.protocol;
+
+option go_package = "github.com/furkansarikaya/tick-storm/internal/protocol/pb";
+
+// Message Types as defined in the protocol specification
+enum MessageType {
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+  MESSAGE_TYPE_AUTH = 1;        // 0x01 - Authentication request
+  MESSAGE_TYPE_SUBSCRIBE = 2;   // 0x02 - Subscription request
+  MESSAGE_TYPE_HEARTBEAT = 3;   // 0x03 - Heartbeat/keepalive
+  MESSAGE_TYPE_DATA_BATCH = 4;  // 0x04 - Batched tick data
+  MESSAGE_TYPE_ERROR = 5;       // 0x05 - Error response
+  MESSAGE_TYPE_ACK = 6;         // 0x06 - Acknowledgment
+  MESSAGE_TYPE_PONG = 7;        // 0x07 - Heartbeat response
+}
+
+// Subscription modes for tick data
+enum SubscriptionMode {
+  SUBSCRIPTION_MODE_UNSPECIFIED = 0;
+  SUBSCRIPTION_MODE_SECOND = 1;  // Receive ticks every second
+  SUBSCRIPTION_MODE_MINUTE = 2;  // Receive ticks every minute
+}
+
+// Error codes for ERROR frames
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_INVALID_AUTH = 1;           // Invalid credentials
+  ERROR_CODE_AUTH_REQUIRED = 2;          // Auth must be first frame
+  ERROR_CODE_ALREADY_AUTHENTICATED = 3;  // Already authenticated
+  ERROR_CODE_INVALID_SUBSCRIPTION = 4;   // Invalid subscription request
+  ERROR_CODE_ALREADY_SUBSCRIBED = 5;     // Already has active subscription
+  ERROR_CODE_NOT_SUBSCRIBED = 6;         // No active subscription
+  ERROR_CODE_HEARTBEAT_TIMEOUT = 7;      // Heartbeat timeout
+  ERROR_CODE_INVALID_MESSAGE = 8;        // Invalid message format
+  ERROR_CODE_CHECKSUM_FAILED = 9;        // CRC32C validation failed
+  ERROR_CODE_PROTOCOL_VERSION = 10;      // Unsupported protocol version
+  ERROR_CODE_MESSAGE_TOO_LARGE = 11;     // Message exceeds max size
+  ERROR_CODE_RATE_LIMITED = 12;          // Too many requests
+  ERROR_CODE_INTERNAL_ERROR = 13;        // Server internal error
+}
+
+// AUTH message - First frame must be authentication
+message AuthRequest {
+  string username = 1;  // Username for authentication
+  string password = 2;  // Password for authentication
+  string client_id = 3; // Optional client identifier
+  string version = 4;   // Optional client version
+}
+
+// SUBSCRIBE message - Request subscription to tick stream
+message SubscribeRequest {
+  SubscriptionMode mode = 1;     // SECOND or MINUTE mode
+  repeated string symbols = 2;   // Optional: specific symbols to subscribe
+  int64 start_time_ms = 3;       // Optional: start time in epoch milliseconds
+  map<string, string> metadata = 4; // Optional: additional metadata
+}
+
+// HEARTBEAT message - Keep connection alive
+message HeartbeatRequest {
+  int64 timestamp_ms = 1;        // Client timestamp in epoch milliseconds
+  uint64 sequence = 2;           // Optional sequence number
+}
+
+// PONG message - Response to heartbeat
+message HeartbeatResponse {
+  int64 client_timestamp_ms = 1; // Echo of client timestamp
+  int64 server_timestamp_ms = 2; // Server timestamp in epoch milliseconds
+  uint64 sequence = 3;           // Echo of sequence number
+}
+
+// Individual tick data
+message Tick {
+  string symbol = 1;             // Symbol/instrument identifier
+  int64 timestamp_ms = 2;        // Tick timestamp in epoch milliseconds
+  double price = 3;              // Current price
+  double volume = 4;             // Volume
+  double bid = 5;                // Best bid price
+  double ask = 6;                // Best ask price
+  int64 bid_size = 7;            // Bid size
+  int64 ask_size = 8;            // Ask size
+  SubscriptionMode mode = 9;     // Mode this tick belongs to (SECOND/MINUTE)
+  map<string, string> metadata = 10; // Optional additional data
+}
+
+// DATA_BATCH message - Batched tick data for efficiency
+message DataBatch {
+  repeated Tick ticks = 1;       // Array of tick messages
+  int64 batch_timestamp_ms = 2;  // Batch creation timestamp
+  uint32 batch_sequence = 3;     // Batch sequence number
+  bool is_snapshot = 4;          // True if this is a snapshot batch
+}
+
+// ERROR message - Error response from server
+message ErrorResponse {
+  ErrorCode code = 1;            // Error code
+  string message = 2;            // Human-readable error message
+  string details = 3;            // Optional detailed error information
+  int64 timestamp_ms = 4;        // Error timestamp
+}
+
+// ACK message - Generic acknowledgment
+message AckResponse {
+  MessageType ack_type = 1;      // Type of message being acknowledged
+  bool success = 2;              // Whether the operation succeeded
+  string message = 3;            // Optional message
+  int64 timestamp_ms = 4;        // Acknowledgment timestamp
+  map<string, string> metadata = 5; // Optional additional data
+}
+
+// Frame wrapper for all messages (used internally, not sent over wire)
+message Frame {
+  MessageType type = 1;          // Message type
+  uint32 version = 2;            // Protocol version
+  bytes payload = 3;             // Serialized message payload
+  uint32 crc32c = 4;             // CRC32C checksum
+  int64 timestamp_ms = 5;        // Frame timestamp
+}
