@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestFrame_MarshalUnmarshal(t *testing.T) {
+func TestFrameMarshalUnmarshal(t *testing.T) {
 	tests := []struct {
 		name    string
 		frame   Frame
@@ -14,7 +14,7 @@ func TestFrame_MarshalUnmarshal(t *testing.T) {
 		{
 			name: "valid frame with small payload",
 			frame: Frame{
-				Version: Version,
+				Version: ProtocolVersion,
 				Type:    1, // AUTH
 				Payload: []byte("test payload"),
 			},
@@ -23,7 +23,7 @@ func TestFrame_MarshalUnmarshal(t *testing.T) {
 		{
 			name: "valid frame with empty payload",
 			frame: Frame{
-				Version: Version,
+				Version: ProtocolVersion,
 				Type:    3, // HEARTBEAT
 				Payload: []byte{},
 			},
@@ -32,7 +32,7 @@ func TestFrame_MarshalUnmarshal(t *testing.T) {
 		{
 			name: "valid frame with binary payload",
 			frame: Frame{
-				Version: Version,
+				Version: ProtocolVersion,
 				Type:    4, // DATA_BATCH
 				Payload: []byte{0x00, 0x01, 0x02, 0x03, 0xFF},
 			},
@@ -73,7 +73,7 @@ func TestFrame_MarshalUnmarshal(t *testing.T) {
 	}
 }
 
-func TestFrame_UnmarshalErrors(t *testing.T) {
+func TestFrameUnmarshalErrors(t *testing.T) {
 	tests := []struct {
 		name    string
 		data    []byte
@@ -86,7 +86,7 @@ func TestFrame_UnmarshalErrors(t *testing.T) {
 		},
 		{
 			name:    "invalid magic bytes",
-			data:    []byte{0xFF, 0xFF, Version, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+			data:    []byte{0xFF, 0xFF, ProtocolVersion, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
 			wantErr: ErrInvalidMagic,
 		},
 		{
@@ -107,10 +107,10 @@ func TestFrame_UnmarshalErrors(t *testing.T) {
 	}
 }
 
-func TestFrame_ChecksumValidation(t *testing.T) {
+func TestFrameChecksumValidation(t *testing.T) {
 	// Create a valid frame
 	frame := Frame{
-		Version: Version,
+		Version: ProtocolVersion,
 		Type:    1,
 		Payload: []byte("test"),
 	}
@@ -132,10 +132,10 @@ func TestFrame_ChecksumValidation(t *testing.T) {
 	}
 }
 
-func TestFrame_MaxMessageSize(t *testing.T) {
+func TestFrameMaxMessageSize(t *testing.T) {
 	// Create a frame with payload exceeding max size
 	frame := Frame{
-		Version: Version,
+		Version: ProtocolVersion,
 		Type:    4,
 		Payload: make([]byte, DefaultMaxMessageSize+1),
 	}
@@ -147,9 +147,9 @@ func TestFrame_MaxMessageSize(t *testing.T) {
 	}
 }
 
-func BenchmarkFrame_Marshal(b *testing.B) {
+func BenchmarkFrameMarshal(b *testing.B) {
 	frame := Frame{
-		Version: Version,
+		Version: ProtocolVersion,
 		Type:    4,
 		Payload: make([]byte, 1024), // 1KB payload
 	}
@@ -160,9 +160,9 @@ func BenchmarkFrame_Marshal(b *testing.B) {
 	}
 }
 
-func BenchmarkFrame_Unmarshal(b *testing.B) {
+func BenchmarkFrameUnmarshal(b *testing.B) {
 	frame := Frame{
-		Version: Version,
+		Version: ProtocolVersion,
 		Type:    4,
 		Payload: make([]byte, 1024), // 1KB payload
 	}

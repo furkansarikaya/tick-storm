@@ -29,6 +29,9 @@ var (
 	
 	// ErrRateLimited indicates too many authentication attempts.
 	ErrRateLimited = errors.New("rate limited")
+	
+	// ErrFirstFrameMustBeAuth indicates the first frame must be an AUTH frame.
+	ErrFirstFrameMustBeAuth = errors.New("first frame must be AUTH")
 )
 
 // Config holds authentication configuration.
@@ -83,8 +86,8 @@ func NewAuthenticator(config *Config) *Authenticator {
 
 // ValidateFirstFrame validates that the first frame is an AUTH frame.
 func (a *Authenticator) ValidateFirstFrame(frame *protocol.Frame) error {
-	if frame.Type != uint8(pb.MessageType_MESSAGE_TYPE_AUTH) {
-		return ErrAuthRequired
+	if frame.Type != protocol.MessageTypeAuth {
+		return ErrFirstFrameMustBeAuth
 	}
 	return nil
 }
@@ -172,43 +175,35 @@ func (a *Authenticator) IsAuthenticated(clientAddr string) bool {
 	return exists && session.Authenticated
 }
 
-// CreateAuthResponse creates an ACK response for successful authentication.
-func CreateAuthResponse(success bool, message string) (*protocol.Frame, error) {
+// CreateAckResponse creates an ACK response frame.
+func CreateAckResponse() *protocol.Frame {
 	ack := &pb.AckResponse{
 		AckType:     pb.MessageType_MESSAGE_TYPE_AUTH,
-		Success:     success,
-		Message:     message,
+		Success:     true,
+		Message:     "Authentication successful",
 		TimestampMs: time.Now().UnixMilli(),
 	}
 	
-	payload, err := proto.Marshal(ack)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal auth response: %w", err)
-	}
-	
+	payload, _ := proto.Marshal(ack)
 	return &protocol.Frame{
-		Version: protocol.Version,
-		Type:    uint8(pb.MessageType_MESSAGE_TYPE_ACK),
+		Version: protocol.ProtocolVersion,
+		Type:    protocol.MessageTypeACK,
 		Payload: payload,
-	}, nil
+	}
 }
 
-// CreateErrorResponse creates an ERROR frame for authentication failures.
-func CreateErrorResponse(code pb.ErrorCode, message string) (*protocol.Frame, error) {
-	errResp := &pb.ErrorResponse{
+// CreateErrorResponse creates an ERROR response frame.
+func CreateErrorResponse(code pb.ErrorCode, message string) *protocol.Frame {
+	errorMsg := &pb.ErrorResponse{
 		Code:        code,
 		Message:     message,
 		TimestampMs: time.Now().UnixMilli(),
 	}
-	
-	payload, err := proto.Marshal(errResp)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal error response: %w", err)
-	}
-	
+
+	payload, _ := proto.Marshal(errorMsg)
 	return &protocol.Frame{
-		Version: protocol.Version,
-		Type:    uint8(pb.MessageType_MESSAGE_TYPE_ERROR),
+		Version: protocol.ProtocolVersion,
+		Type:    protocol.MessageTypeError,
 		Payload: payload,
-	}, nil
+	}
 }
