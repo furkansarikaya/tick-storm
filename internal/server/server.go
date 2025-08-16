@@ -42,6 +42,10 @@ type Config struct {
 	// Heartbeat settings
 	HeartbeatInterval time.Duration
 	HeartbeatTimeout  time.Duration
+	
+	// Data delivery settings
+	BatchWindow    time.Duration
+	MaxBatchSize   int
 }
 
 // DefaultConfig returns default server configuration.
@@ -53,9 +57,11 @@ func DefaultConfig() *Config {
 		WriteTimeout:      5 * time.Second,
 		KeepAlive:         30 * time.Second,
 		MaxMessageSize:    protocol.DefaultMaxMessageSize,
-		AuthTimeout:       30 * time.Second,
+		AuthTimeout:       10 * time.Second,
 		HeartbeatInterval: 15 * time.Second,
 		HeartbeatTimeout:  20 * time.Second,
+		BatchWindow:       5 * time.Millisecond,
+		MaxBatchSize:      100,
 	}
 }
 
