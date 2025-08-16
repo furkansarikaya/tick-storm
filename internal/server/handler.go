@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"time"
 
@@ -26,10 +27,17 @@ type ConnectionHandler struct {
 	pendingBatch   []*pb.Tick
 	dataChan       chan []*pb.Tick
 	batchTimer     *time.Timer
+	logger         *slog.Logger
+	subscriptionTimer *time.Timer  // Timer for subscription timeout
 }
 
 // NewConnectionHandler creates a new connection handler.
 func NewConnectionHandler(conn *Connection, config *Config) *ConnectionHandler {
+	logger := slog.Default().With(
+		"connection_id", conn.ID(),
+		"remote_addr", conn.RemoteAddr(),
+	)
+	
 	return &ConnectionHandler{
 		conn:           conn,
 		config:         config,
@@ -37,6 +45,7 @@ func NewConnectionHandler(conn *Connection, config *Config) *ConnectionHandler {
 		dataChan:       make(chan []*pb.Tick, 100),
 		batchTimer:     time.NewTimer(5 * time.Millisecond),
 		pendingBatch:   make([]*pb.Tick, 0, 100),
+		logger:         logger,
 	}
 }
 
@@ -130,7 +139,11 @@ func (h *ConnectionHandler) handleHeartbeat(frame *protocol.Frame) error {
 		return fmt.Errorf("failed to unmarshal heartbeat: %w", err)
 	}
 	
-	// Log heartbeat received (logger will be added later)
+	// Log heartbeat received
+	h.logger.Debug("heartbeat received",
+		"timestamp_ms", hb.TimestampMs,
+		"sequence", hb.Sequence,
+	)
 	
 	// Update last heartbeat time
 	h.lastHeartbeat = time.Now()
@@ -148,29 +161,75 @@ func (h *ConnectionHandler) handleHeartbeat(frame *protocol.Frame) error {
 func (h *ConnectionHandler) handleSubscribe(frame *protocol.Frame) error {
 	var sub pb.SubscribeRequest
 	if err := proto.Unmarshal(frame.Payload, &sub); err != nil {
+		h.logger.Error("failed to unmarshal subscribe request",
+			"error", err,
+		)
 		return fmt.Errorf("failed to unmarshal subscribe: %w", err)
 	}
 	
+	// Log subscription attempt
+	h.logger.Info("subscription request received",
+		"mode", sub.Mode.String(),
+		"symbols", sub.Symbols,
+		"start_time_ms", sub.StartTimeMs,
+	)
+	
 	// Validate subscription mode
 	if sub.Mode != pb.SubscriptionMode_SUBSCRIPTION_MODE_SECOND && sub.Mode != pb.SubscriptionMode_SUBSCRIPTION_MODE_MINUTE {
+		h.logger.Warn("invalid subscription mode",
+			"mode", sub.Mode.String(),
+		)
 		return protocol.ErrInvalidSubscription
 	}
 	
 	// Check if already subscribed
-	if h.conn.GetSubscription() != nil {
+	existingSub := h.conn.GetSubscription()
+	if existingSub != nil {
+		// Check if trying to switch modes
+		if existingSub.Mode != sub.Mode {
+			h.logger.Warn("subscription mode switching attempted",
+				"current_mode", existingSub.Mode.String(),
+				"requested_mode", sub.Mode.String(),
+			)
+			return fmt.Errorf("subscription mode switching not allowed: already subscribed to %s mode", existingSub.Mode.String())
+		}
+		h.logger.Warn("duplicate subscription attempt",
+			"existing_mode", existingSub.Mode.String(),
+		)
 		return protocol.ErrAlreadySubscribed
 	}
 	
 	// Create subscription
 	subscription := NewSubscription(sub.Mode)
 	if err := h.conn.SetSubscription(subscription); err != nil {
+		h.logger.Error("failed to set subscription",
+			"error", err,
+		)
 		return err
 	}
 	
+	// Set up subscription timeout (30 seconds to receive first data)
+	if h.subscriptionTimer != nil {
+		h.subscriptionTimer.Stop()
+	}
+	h.subscriptionTimer = time.AfterFunc(30*time.Second, func() {
+		h.logger.Warn("subscription timeout - no data generated within 30 seconds")
+		// Could implement additional handling here if needed
+	})
+	
 	// Send subscription confirmation
 	if err := h.conn.SendSubscriptionConfirmed(); err != nil {
+		h.logger.Error("failed to send subscription confirmation",
+			"error", err,
+		)
 		return err
 	}
+	
+	// Log successful subscription
+	h.logger.Info("subscription confirmed",
+		"mode", sub.Mode.String(),
+		"created_at", subscription.CreatedAt,
+	)
 	
 	// Start data generation based on subscription mode
 	go h.startDataGeneration(subscription)
@@ -185,32 +244,55 @@ func (h *ConnectionHandler) startDataGeneration(subscription *Subscription) {
 	switch subscription.Mode {
 	case pb.SubscriptionMode_SUBSCRIPTION_MODE_SECOND:
 		ticker = time.NewTicker(1 * time.Second)
+		h.logger.Info("starting tick generation", "mode", "SECOND", "interval", "1s")
 	case pb.SubscriptionMode_SUBSCRIPTION_MODE_MINUTE:
 		ticker = time.NewTicker(1 * time.Minute)
+		h.logger.Info("starting tick generation", "mode", "MINUTE", "interval", "1m")
 	default:
+		h.logger.Error("invalid subscription mode for data generation", "mode", subscription.Mode.String())
 		return
 	}
 	
 	defer ticker.Stop()
+	defer func() {
+		if h.subscriptionTimer != nil {
+			h.subscriptionTimer.Stop()
+		}
+		h.logger.Info("stopping tick generation", "mode", subscription.Mode.String())
+	}()
 	
 	var i int
 	for {
 		select {
 		case <-ticker.C:
+			// Reset subscription timeout on successful data generation
+			if h.subscriptionTimer != nil {
+				h.subscriptionTimer.Stop()
+			}
+			
 			// Generate tick data (placeholder - in production, get real data)
 			tick := &pb.Tick{
 				Symbol:      fmt.Sprintf("TICK_%d", i),
 				Price:       100.0 + rand.Float64()*10,
 				Volume:      float64(rand.Intn(1000)),
 				TimestampMs: time.Now().UnixMilli(),
+				Mode:        subscription.Mode,
 			}
 			
 			// Send to data channel for batching
 			select {
 			case h.dataChan <- []*pb.Tick{tick}:
+				h.logger.Debug("tick generated",
+					"symbol", tick.Symbol,
+					"price", tick.Price,
+					"mode", subscription.Mode.String(),
+				)
+				i++
 			default:
 				// Channel full, drop tick (or handle backpressure)
-			}
+				h.logger.Warn("data channel full, dropping tick",
+					"symbol", tick.Symbol,
+				)
 			
 		case <-time.After(time.Second):
 			// Connection closed
@@ -219,55 +301,4 @@ func (h *ConnectionHandler) startDataGeneration(subscription *Subscription) {
 	}
 }
 
-// deliveryLoop handles data delivery with micro-batching.
-func (h *ConnectionHandler) deliveryLoop(ctx context.Context, errChan chan<- error) {
-	batchWindow := 5 * time.Millisecond
-	maxBatchSize := 100
-	
-	for {
-		select {
-		case <-ctx.Done():
-			return
-			
-		case ticks := <-h.dataChan:
-			// Add to pending batch
-			h.pendingBatch = append(h.pendingBatch, ticks...)
-			
-			// Check if batch is full
-			if len(h.pendingBatch) >= maxBatchSize {
-				if err := h.flushBatch(); err != nil {
-					errChan <- err
-					return
-				}
-			} else {
-				// Reset batch timer
-				h.batchTimer.Reset(batchWindow)
-			}
-			
-		case <-h.batchTimer.C:
-			// Flush pending batch
-			if len(h.pendingBatch) > 0 {
-				if err := h.flushBatch(); err != nil {
-					errChan <- err
-					return
-				}
-			}
-			h.batchTimer.Reset(batchWindow)
-		}
-	}
-}
-
-// flushBatch sends the pending batch.
-func (h *ConnectionHandler) flushBatch() error {
-	if len(h.pendingBatch) == 0 {
-		return nil
-	}
-	
-	// Send batch
-	err := h.conn.SendDataBatch(h.pendingBatch)
-	
-	// Clear batch
-	h.pendingBatch = h.pendingBatch[:0]
-	
-	return err
 }

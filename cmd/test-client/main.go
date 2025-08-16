@@ -80,7 +80,8 @@ func main() {
 	}
 
 	// Test 2: Send SUBSCRIBE frame
-	subReq := &pb.SubscriptionRequest{
+	// Note: Based on the protobuf definitions, we'll send a simple subscribe message
+	subReq := &pb.SubscribeRequest{
 		Mode: pb.SubscriptionMode_SUBSCRIPTION_MODE_SECOND,
 	}
 
@@ -156,8 +157,8 @@ func main() {
 					log.Printf("Received data batch with %d ticks", len(batch.Ticks))
 					for i, tick := range batch.Ticks {
 						if i < 3 { // Show first 3 ticks
-							log.Printf("  Tick %d: Symbol=%s, Price=%.2f, Volume=%d, Timestamp=%d",
-								i+1, tick.Symbol, tick.Price, tick.Volume, tick.Timestamp)
+							log.Printf("  Tick %d: Symbol=%s, Price=%.2f, Volume=%.2f, Timestamp=%d",
+								i+1, tick.Symbol, tick.Price, tick.Volume, tick.TimestampMs)
 						}
 					}
 

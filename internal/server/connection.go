@@ -265,9 +265,19 @@ func (c *Connection) SendPong(clientTimestamp int64, sequence uint64) error {
 
 // SendDataBatch sends a batch of tick data.
 func (c *Connection) SendDataBatch(ticks []*pb.Tick) error {
-	batch := &pb.DataBatch{
-		Ticks: ticks,
+	if len(ticks) == 0 {
+		return nil
 	}
+	
+	batch := &pb.DataBatch{
+		Ticks:            ticks,
+		BatchTimestampMs: time.Now().UnixMilli(),
+		BatchSequence:    uint32(atomic.AddUint64(&c.messagesSent, 1)),
+		IsSnapshot:       false,
+	}
+	
+	// Update metrics
+	atomic.AddUint64(&c.bytesSent, uint64(len(ticks)*64)) // Approximate bytes per tick
 	
 	return c.SendMessage(protocol.MessageTypeDataBatch, batch)
 }
