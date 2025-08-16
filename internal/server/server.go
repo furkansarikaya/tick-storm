@@ -21,7 +21,7 @@ import (
 var (
 	// ErrServerClosed is returned when operations are attempted on a closed server.
 	ErrServerClosed = errors.New("server closed")
-	
+
 	// ErrMaxConnections is returned when the server has reached its connection limit.
 	ErrMaxConnections = errors.New("maximum connections reached")
 )
@@ -29,34 +29,34 @@ var (
 // Config holds server configuration.
 type Config struct {
 	// Network settings
-	ListenAddr      string
-	MaxConnections  int
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	KeepAlive       time.Duration
-	
+	ListenAddr     string
+	MaxConnections int
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
+	KeepAlive      time.Duration
+
 	// TLS settings
-	TLS             *TLSConfig
-	
+	TLS *TLSConfig
+
 	// TCP Performance settings
 	TCPReadBufferSize  int
 	TCPWriteBufferSize int
 	WriteDeadlineMS    int
 	MaxWriteQueueSize  int
-	
+
 	// Protocol settings
-	MaxMessageSize  uint32
-	
+	MaxMessageSize uint32
+
 	// Authentication
-	AuthTimeout     time.Duration
-	
+	AuthTimeout time.Duration
+
 	// Heartbeat settings
 	HeartbeatInterval time.Duration
 	HeartbeatTimeout  time.Duration
-	
+
 	// Data delivery settings
-	BatchWindow    time.Duration
-	MaxBatchSize   int
+	BatchWindow  time.Duration
+	MaxBatchSize int
 }
 
 // DefaultConfig returns default server configuration.
@@ -68,10 +68,10 @@ func DefaultConfig() *Config {
 		WriteTimeout:       5 * time.Second,
 		KeepAlive:          30 * time.Second,
 		TLS:                DefaultTLSConfig(),
-		TCPReadBufferSize:  65536,  // 64KB
-		TCPWriteBufferSize: 65536,  // 64KB
-		WriteDeadlineMS:    5000,   // 5s default
-		MaxWriteQueueSize:  1000,   // Max queued writes per connection
+		TCPReadBufferSize:  65536, // 64KB
+		TCPWriteBufferSize: 65536, // 64KB
+		WriteDeadlineMS:    5000,  // 5s default
+		MaxWriteQueueSize:  1000,  // Max queued writes per connection
 		MaxMessageSize:     protocol.DefaultMaxMessageSize,
 		AuthTimeout:        10 * time.Second,
 		HeartbeatInterval:  15 * time.Second,
@@ -86,49 +86,49 @@ func LoadConfigFromEnv(cfg *Config) {
 	if port := os.Getenv("LISTEN_PORT"); port != "" {
 		cfg.ListenAddr = ":" + port
 	}
-	
+
 	// Load TLS configuration from environment
 	if cfg.TLS != nil {
 		LoadTLSConfigFromEnv(cfg.TLS)
 	}
-	
+
 	if interval := os.Getenv("HEARTBEAT_INTERVAL"); interval != "" {
 		if d, err := time.ParseDuration(interval); err == nil {
 			cfg.HeartbeatInterval = d
 		}
 	}
-	
+
 	if timeout := os.Getenv("HEARTBEAT_TIMEOUT"); timeout != "" {
 		if d, err := time.ParseDuration(timeout); err == nil {
 			cfg.HeartbeatTimeout = d
 		}
 	}
-	
+
 	if batchWindow := os.Getenv("BATCH_WINDOW"); batchWindow != "" {
 		if d, err := time.ParseDuration(batchWindow); err == nil {
 			cfg.BatchWindow = d
 		}
 	}
-	
+
 	// TCP Performance settings
 	if readBufSize := os.Getenv("TCP_READ_BUFFER_SIZE"); readBufSize != "" {
 		if size, err := strconv.Atoi(readBufSize); err == nil {
 			cfg.TCPReadBufferSize = size
 		}
 	}
-	
+
 	if writeBufSize := os.Getenv("TCP_WRITE_BUFFER_SIZE"); writeBufSize != "" {
 		if size, err := strconv.Atoi(writeBufSize); err == nil {
 			cfg.TCPWriteBufferSize = size
 		}
 	}
-	
+
 	if writeDeadline := os.Getenv("WRITE_DEADLINE_MS"); writeDeadline != "" {
 		if ms, err := strconv.Atoi(writeDeadline); err == nil {
 			cfg.WriteDeadlineMS = ms
 		}
 	}
-	
+
 	if maxWriteQueue := os.Getenv("MAX_WRITE_QUEUE_SIZE"); maxWriteQueue != "" {
 		if size, err := strconv.Atoi(maxWriteQueue); err == nil {
 			cfg.MaxWriteQueueSize = size
@@ -140,7 +140,7 @@ func LoadConfigFromEnv(cfg *Config) {
 			cfg.MaxBatchSize = size
 		}
 	}
-	
+
 	if deadline := os.Getenv("WRITE_DEADLINE_MS"); deadline != "" {
 		if d, err := time.ParseDuration(deadline + "ms"); err == nil {
 			cfg.WriteTimeout = d
@@ -150,26 +150,26 @@ func LoadConfigFromEnv(cfg *Config) {
 
 // Server represents the TCP server.
 type Server struct {
-	config         *Config
-	listener       net.Listener
-	authenticator  *auth.Authenticator
-	
+	config        *Config
+	listener      net.Listener
+	authenticator *auth.Authenticator
+
 	// Connection management
-	mu             sync.RWMutex
-	connections    map[string]*Connection
-	activeConns    int32
-	
+	mu          sync.RWMutex
+	connections map[string]*Connection
+	activeConns int32
+
 	// Lifecycle management
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	closed         atomic.Bool
-	
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	closed atomic.Bool
+
 	// Metrics
-	totalConns     uint64
-	authSuccess    uint64
-	authFailures   uint64
-	tlsMetrics     *TLSMetrics
+	totalConns   uint64
+	authSuccess  uint64
+	authFailures uint64
+	tlsMetrics   *TLSMetrics
 }
 
 // NewServer creates a new TCP server.
@@ -177,11 +177,11 @@ func NewServer(config *Config) *Server {
 	if config == nil {
 		config = DefaultConfig()
 	}
-	
+
 	LoadConfigFromEnv(config)
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	return &Server{
 		config:        config,
 		authenticator: auth.NewAuthenticator(auth.DefaultConfig()),
@@ -197,26 +197,26 @@ func (s *Server) Start() error {
 	if s.closed.Load() {
 		return ErrServerClosed
 	}
-	
+
 	// Validate TLS configuration if enabled
 	if s.config.TLS != nil {
 		if err := s.config.TLS.ValidateTLSConfig(); err != nil {
 			return fmt.Errorf("TLS configuration validation failed: %w", err)
 		}
 	}
-	
+
 	// Create listener with TLS support if enabled
 	listener, err := s.createListener()
 	if err != nil {
 		return fmt.Errorf("failed to create listener: %w", err)
 	}
-	
+
 	s.listener = listener
-	
+
 	// Start accepting connections
 	s.wg.Add(1)
 	go s.acceptLoop()
-	
+
 	return nil
 }
 
@@ -227,7 +227,7 @@ func (s *Server) createListener() (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", s.config.ListenAddr, err)
 	}
-	
+
 	// Wrap with TLS if enabled
 	if s.config.TLS != nil && s.config.TLS.Enabled {
 		tlsConfig, err := s.config.TLS.BuildTLSConfig()
@@ -235,10 +235,10 @@ func (s *Server) createListener() (net.Listener, error) {
 			listener.Close()
 			return nil, fmt.Errorf("failed to build TLS config: %w", err)
 		}
-		
+
 		return tls.NewListener(listener, tlsConfig), nil
 	}
-	
+
 	return listener, nil
 }
 
@@ -247,25 +247,25 @@ func (s *Server) Stop(ctx context.Context) error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil // Already closed
 	}
-	
+
 	// Stop accepting new connections
 	if s.listener != nil {
 		s.listener.Close()
 	}
-	
+
 	// Cancel server context
 	s.cancel()
-	
+
 	// Close all active connections
 	s.closeAllConnections()
-	
+
 	// Wait for all goroutines to finish or context to expire
 	done := make(chan struct{})
 	go func() {
 		s.wg.Wait()
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		return nil
@@ -277,29 +277,29 @@ func (s *Server) Stop(ctx context.Context) error {
 // acceptLoop accepts incoming connections.
 func (s *Server) acceptLoop() {
 	defer s.wg.Done()
-	
+
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
 			if s.closed.Load() {
 				return
 			}
-			
+
 			// Check if it's a temporary error
 			if ne, ok := err.(net.Error); ok && ne.Temporary() {
 				time.Sleep(10 * time.Millisecond)
 				continue
 			}
-			
+
 			return
 		}
-		
+
 		// Check connection limit
 		if atomic.LoadInt32(&s.activeConns) >= int32(s.config.MaxConnections) {
 			conn.Close()
 			continue
 		}
-		
+
 		// Handle connection
 		s.wg.Add(1)
 		go s.handleConnection(conn)
@@ -309,18 +309,18 @@ func (s *Server) acceptLoop() {
 // handleConnection handles a single client connection.
 func (s *Server) handleConnection(netConn net.Conn) {
 	defer s.wg.Done()
-	
+
 	// Record TLS connection metrics if applicable
 	if tlsConn, ok := netConn.(*tls.Conn); ok {
 		s.tlsMetrics.RecordTLSConnection()
-		
+
 		// Perform handshake and record metrics
 		start := time.Now()
 		err := tlsConn.Handshake()
 		handshakeDuration := time.Since(start)
-		
+
 		s.tlsMetrics.RecordTLSHandshake(handshakeDuration, err)
-		
+
 		if err == nil {
 			// Record TLS version and cipher suite
 			state := tlsConn.ConnectionState()
@@ -328,26 +328,26 @@ func (s *Server) handleConnection(netConn net.Conn) {
 			s.tlsMetrics.RecordCipherSuite(state.CipherSuite)
 		}
 	}
-	
+
 	// Update metrics
 	atomic.AddInt32(&s.activeConns, 1)
 	atomic.AddUint64(&s.totalConns, 1)
 	defer atomic.AddInt32(&s.activeConns, -1)
-	
+
 	// Configure TCP connection
 	if tcpConn, ok := netConn.(*net.TCPConn); ok {
 		tcpConn.SetKeepAlive(true)
 		tcpConn.SetKeepAlivePeriod(s.config.KeepAlive)
 		tcpConn.SetNoDelay(true) // Disable Nagle's algorithm for low latency
 	}
-	
+
 	// Create connection wrapper
 	conn := NewConnection(netConn, s.config)
-	
+
 	// Register connection
 	s.registerConnection(conn)
 	defer s.unregisterConnection(conn)
-	
+
 	// Handle the connection
 	if err := s.processConnection(conn); err != nil {
 		// Log error (in production, use proper logging)
@@ -361,11 +361,11 @@ func (s *Server) handleConnection(netConn net.Conn) {
 func (s *Server) processConnection(conn *Connection) error {
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
-	
+
 	// Set authentication timeout
 	authTimer := time.NewTimer(s.config.AuthTimeout)
 	defer authTimer.Stop()
-	
+
 	// Read first frame (must be AUTH)
 	select {
 	case <-authTimer.C:
@@ -374,22 +374,22 @@ func (s *Server) processConnection(conn *Connection) error {
 		return ctx.Err()
 	default:
 	}
-	
+
 	// Set read deadline for auth
 	conn.SetReadDeadline(time.Now().Add(s.config.AuthTimeout))
-	
+
 	frame, err := conn.ReadFrame()
 	if err != nil {
 		return err
 	}
-	
+
 	// Validate first frame is AUTH
 	if err := s.authenticator.ValidateFirstFrame(frame); err != nil {
 		conn.SendAuthError()
 		atomic.AddUint64(&s.authFailures, 1)
 		return err
 	}
-	
+
 	// Authenticate
 	session, err := s.authenticator.Authenticate(ctx, conn.RemoteAddr(), frame)
 	if err != nil {
@@ -397,17 +397,17 @@ func (s *Server) processConnection(conn *Connection) error {
 		atomic.AddUint64(&s.authFailures, 1)
 		return err
 	}
-	
+
 	// Authentication successful
 	atomic.AddUint64(&s.authSuccess, 1)
 	conn.SetAuthenticated(session)
-	
+
 	// Send AUTH ACK
 	if err := conn.SendAuthSuccess(); err != nil {
 		return err
 	}
 	conn.SetReadDeadline(time.Time{})
-	
+
 	// Start connection handler
 	handler := NewConnectionHandler(conn, s.config)
 	return handler.Handle(ctx)
@@ -417,7 +417,7 @@ func (s *Server) processConnection(conn *Connection) error {
 func (s *Server) registerConnection(conn *Connection) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	s.connections[conn.ID()] = conn
 }
 
@@ -425,9 +425,9 @@ func (s *Server) registerConnection(conn *Connection) {
 func (s *Server) unregisterConnection(conn *Connection) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	delete(s.connections, conn.ID())
-	
+
 	// Clean up authentication session
 	s.authenticator.RemoveSession(conn.RemoteAddr())
 }
@@ -440,7 +440,7 @@ func (s *Server) closeAllConnections() {
 		connections = append(connections, conn)
 	}
 	s.mu.Unlock()
-	
+
 	// Close connections outside of lock
 	for _, conn := range connections {
 		conn.Close()
@@ -450,21 +450,21 @@ func (s *Server) closeAllConnections() {
 // GetStats returns server statistics.
 func (s *Server) GetStats() map[string]interface{} {
 	stats := map[string]interface{}{
-		"active_connections":  atomic.LoadInt32(&s.activeConns),
-		"total_connections":   atomic.LoadUint64(&s.totalConns),
-		"auth_success":        atomic.LoadUint64(&s.authSuccess),
-		"auth_failures":       atomic.LoadUint64(&s.authFailures),
-		"max_connections":     s.config.MaxConnections,
-		"listen_addr":         s.config.ListenAddr,
+		"active_connections": atomic.LoadInt32(&s.activeConns),
+		"total_connections":  atomic.LoadUint64(&s.totalConns),
+		"auth_success":       atomic.LoadUint64(&s.authSuccess),
+		"auth_failures":      atomic.LoadUint64(&s.authFailures),
+		"max_connections":    s.config.MaxConnections,
+		"listen_addr":        s.config.ListenAddr,
 	}
-	
+
 	// Add TLS metrics if TLS is enabled
 	if s.config.TLS != nil && s.config.TLS.Enabled {
 		stats["tls"] = s.tlsMetrics.GetTLSMetrics()
 		stats["tls_health"] = s.tlsMetrics.GetTLSHealthStatus()
 		stats["tls_config"] = s.config.TLS.GetTLSInfo()
 	}
-	
+
 	return stats
 }
 

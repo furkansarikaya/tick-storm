@@ -22,8 +22,8 @@ const (
 	ProtocolVersion = 0x01 // Current protocol version
 
 	// Frame structure sizes.
-	FrameHeaderSize = 8  // Magic(2) + Ver(1) + Type(1) + Len(4)
-	CRCSize         = 4  // CRC32C(4)
+	FrameHeaderSize = 8 // Magic(2) + Ver(1) + Type(1) + Len(4)
+	CRCSize         = 4 // CRC32C(4)
 	MinFrameSize    = FrameHeaderSize + CRCSize
 
 	// Maximum message size (64KB default).
@@ -42,37 +42,37 @@ const (
 var (
 	// ErrInvalidMagic indicates invalid magic bytes in frame header.
 	ErrInvalidMagic = errors.New("invalid magic bytes")
-	
+
 	// ErrUnsupportedVersion indicates unsupported protocol version.
 	ErrUnsupportedVersion = errors.New("unsupported protocol version")
-	
+
 	// ErrInvalidChecksum indicates checksum mismatch.
 	ErrInvalidChecksum = errors.New("invalid checksum")
-	
+
 	// ErrMessageTooLarge indicates message exceeds maximum size.
 	ErrMessageTooLarge = errors.New("message too large")
-	
+
 	// ErrAuthTimeout indicates authentication timeout.
 	ErrAuthTimeout = errors.New("authentication timeout")
-	
+
 	// ErrInvalidSubscription indicates invalid subscription request.
 	ErrInvalidSubscription = errors.New("invalid subscription")
-	
+
 	// ErrAlreadySubscribed indicates client already has a subscription.
 	ErrAlreadySubscribed = errors.New("already subscribed")
-	
+
 	// ErrRateLimited indicates rate limit exceeded.
 	ErrRateLimited = errors.New("rate limited")
-	
+
 	// ErrHeartbeatTimeout indicates heartbeat timeout.
 	ErrHeartbeatTimeout = errors.New("heartbeat timeout")
-	
+
 	// ErrInvalidSequence indicates invalid message sequence.
 	ErrInvalidSequence = errors.New("invalid message sequence")
-	
+
 	// ErrInvalidMessageType indicates invalid message type.
 	ErrInvalidMessageType = errors.New("invalid message type")
-	
+
 	// ErrIncompleteFrame indicates incomplete frame data.
 	ErrIncompleteFrame = errors.New("incomplete frame")
 )
@@ -168,7 +168,7 @@ func (f *Frame) Unmarshal(data []byte) error {
 	checksumStart := FrameHeaderSize + int(payloadLen)
 	providedChecksum := binary.BigEndian.Uint32(data[checksumStart:])
 	calculatedChecksum := crc32.Checksum(data[:checksumStart], crc32.MakeTable(crc32.Castagnoli))
-	
+
 	if providedChecksum != calculatedChecksum {
 		return ErrInvalidChecksum
 	}
@@ -178,7 +178,7 @@ func (f *Frame) Unmarshal(data []byte) error {
 
 // FrameReader reads frames from an io.Reader.
 type FrameReader struct {
-	r             io.Reader
+	r              io.Reader
 	maxMessageSize uint32
 }
 
@@ -188,7 +188,7 @@ func NewFrameReader(r io.Reader, maxMessageSize uint32) *FrameReader {
 		maxMessageSize = DefaultMaxMessageSize
 	}
 	return &FrameReader{
-		r:             r,
+		r:              r,
 		maxMessageSize: maxMessageSize,
 	}
 }
@@ -229,7 +229,7 @@ func (r *FrameReader) ReadFrame() (*Frame, error) {
 	checksumStart := FrameHeaderSize + int(payloadLen)
 	providedChecksum := binary.BigEndian.Uint32(fullFrame[checksumStart:])
 	calculatedChecksum := crc32.Checksum(fullFrame[:checksumStart], crc32.MakeTable(crc32.Castagnoli))
-	
+
 	if providedChecksum != calculatedChecksum {
 		return nil, ErrInvalidChecksum
 	}
