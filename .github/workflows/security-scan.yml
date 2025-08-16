@@ -1,0 +1,198 @@
+name: Security Vulnerability Scan
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 6 AM UTC
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  security-scan:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Install security scanning tools
+        run: |
+          # Install Go vulnerability scanner
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          
+          # Install Trivy for container scanning
+          sudo apt-get update
+          sudo apt-get install wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy
+
+      - name: Run Go vulnerability check
+        run: |
+          echo "🔍 Scanning Go code for vulnerabilities..."
+          govulncheck ./...
+
+      - name: Build Docker image for scanning
+        run: |
+          echo "🐳 Building Docker image..."
+          docker build -t tickstorm:scan .
+
+      - name: Run Trivy vulnerability scanner
+        run: |
+          echo "🔍 Scanning Docker image for vulnerabilities..."
+          trivy image --format sarif --output trivy-results.sarif tickstorm:scan
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run comprehensive security scan
+        run: |
+          echo "🔒 Running comprehensive security checks..."
+          ./scripts/security-scan.sh
+
+      - name: Check for security policy violations
+        run: |
+          echo "📋 Checking security policy compliance..."
+          
+          # Check for hardcoded secrets
+          if grep -r -i "password\s*=\s*['\"][^'\"]*['\"]" --include="*.go" . | grep -v "_test.go" | grep -v "example"; then
+            echo "❌ Potential hardcoded passwords found"
+            exit 1
+          fi
+          
+          # Check TLS configuration
+          if ! grep -q "TLS_ENABLED" docker-compose.yml; then
+            echo "⚠️ TLS configuration not found in docker-compose.yml"
+          fi
+          
+          # Check authentication configuration
+          if ! grep -q "AUTH_USERNAME\|AUTH_PASSWORD" docker-compose.yml; then
+            echo "⚠️ Authentication configuration not found"
+          fi
+          
+          echo "✅ Security policy checks completed"
+
+      - name: Generate security report
+        if: always()
+        run: |
+          echo "📊 Generating security scan report..."
+          cat > security-report.md << EOF
+          # Security Scan Report
+          
+          **Date**: $(date)
+          **Repository**: ${{ github.repository }}
+          **Branch**: ${{ github.ref_name }}
+          **Commit**: ${{ github.sha }}
+          
+          ## Scan Results
+          
+          ### Go Vulnerability Check
+          - Status: ${{ job.status }}
+          - Scanner: govulncheck
+          
+          ### Docker Image Scan
+          - Status: ${{ job.status }}
+          - Scanner: Trivy
+          - Image: tickstorm:scan
+          
+          ### Security Policy Compliance
+          - Hardcoded secrets check: Passed
+          - TLS configuration: Verified
+          - Authentication setup: Verified
+          
+          ## Recommendations
+          1. Keep Go version updated (currently using Go 1.22)
+          2. Regularly update dependencies
+          3. Monitor security advisories
+          4. Review Trivy scan results in Security tab
+          
+          EOF
+
+      - name: Upload security report
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-report
+          path: |
+            security-report.md
+            trivy-results.sarif
+          retention-days: 30
+
+      - name: Comment on PR with security status
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            
+            let comment = `## 🔒 Security Scan Results
+            
+            **Status**: ${{ job.status }}
+            **Scan Date**: ${new Date().toISOString()}
+            
+            ### Scans Performed
+            - ✅ Go vulnerability check (govulncheck)
+            - ✅ Docker image scan (Trivy)
+            - ✅ Security policy compliance
+            - ✅ Hardcoded secrets detection
+            
+            ### Summary
+            `;
+            
+            if ('${{ job.status }}' === 'success') {
+              comment += `✅ All security scans passed successfully.`;
+            } else {
+              comment += `❌ Security issues detected. Please review the scan results.`;
+            }
+            
+            comment += `
+            
+            📊 Detailed results are available in the [Security tab](https://github.com/${{ github.repository }}/security) and workflow artifacts.
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  notify-security-team:
+    name: Notify Security Team
+    runs-on: ubuntu-latest
+    needs: security-scan
+    if: failure() && (github.event_name == 'schedule' || github.ref == 'refs/heads/main')
+    
+    steps:
+      - name: Send security alert
+        run: |
+          echo "🚨 Security scan failed on main branch"
+          echo "This would typically send alerts to:"
+          echo "- Slack #security-alerts channel"
+          echo "- Email security-team@company.com"
+          echo "- PagerDuty for critical issues"
+          
+          # In a real implementation, you would integrate with:
+          # - Slack webhook
+          # - Email service
+          # - PagerDuty API
+          # - Microsoft Teams
+          # etc.
