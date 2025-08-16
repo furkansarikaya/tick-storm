@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -80,6 +81,18 @@ func LoadConfigFromEnv(cfg *Config) {
 	if timeout := os.Getenv("HEARTBEAT_TIMEOUT"); timeout != "" {
 		if d, err := time.ParseDuration(timeout); err == nil {
 			cfg.HeartbeatTimeout = d
+		}
+	}
+	
+	if batchWindow := os.Getenv("BATCH_WINDOW"); batchWindow != "" {
+		if d, err := time.ParseDuration(batchWindow); err == nil {
+			cfg.BatchWindow = d
+		}
+	}
+	
+	if maxBatchSize := os.Getenv("MAX_BATCH_SIZE"); maxBatchSize != "" {
+		if size, err := strconv.Atoi(maxBatchSize); err == nil && size > 0 {
+			cfg.MaxBatchSize = size
 		}
 	}
 	

@@ -38,15 +38,31 @@ func NewConnectionHandler(conn *Connection, config *Config) *ConnectionHandler {
 		"remote_addr", conn.RemoteAddr(),
 	)
 	
-	return &ConnectionHandler{
+	ctx, cancel := context.WithCancel(context.Background())
+	
+	handler := &ConnectionHandler{
 		conn:           conn,
 		config:         config,
-		heartbeatTimer: time.NewTimer(config.HeartbeatTimeout),
+		ctx:            ctx,
+		cancel:         cancel,
 		dataChan:       make(chan []*pb.Tick, 100),
 		batchTimer:     time.NewTimer(5 * time.Millisecond),
 		pendingBatch:   make([]*pb.Tick, 0, 100),
 		logger:         logger,
+		lastHeartbeat:  time.Now(), // Initialize to current time
 	}
+	
+	// Initialize heartbeat timer - client must send heartbeat within timeout period
+	handler.heartbeatTimer = time.AfterFunc(config.HeartbeatTimeout, func() {
+		handler.handleHeartbeatTimeout()
+	})
+	
+	handler.logger.Info("heartbeat mechanism initialized",
+		"heartbeat_interval", config.HeartbeatInterval,
+		"heartbeat_timeout", config.HeartbeatTimeout,
+	)
+	
+	return handler
 }
 
 // Handle handles the connection after authentication.
@@ -136,25 +152,79 @@ func (h *ConnectionHandler) processFrame(ctx context.Context, frame *protocol.Fr
 func (h *ConnectionHandler) handleHeartbeat(frame *protocol.Frame) error {
 	var hb pb.HeartbeatRequest
 	if err := proto.Unmarshal(frame.Payload, &hb); err != nil {
+		h.logger.Error("failed to unmarshal heartbeat",
+			"error", err,
+		)
 		return fmt.Errorf("failed to unmarshal heartbeat: %w", err)
+	}
+	
+	// Validate heartbeat fields
+	if hb.TimestampMs <= 0 {
+		h.logger.Warn("invalid heartbeat timestamp",
+			"timestamp_ms", hb.TimestampMs,
+		)
+		return fmt.Errorf("invalid heartbeat timestamp: %d", hb.TimestampMs)
+	}
+	
+	now := time.Now()
+	
+	// Check for heartbeat flooding (prevent too frequent heartbeats)
+	if !h.lastHeartbeat.IsZero() {
+		timeSinceLastHeartbeat := now.Sub(h.lastHeartbeat)
+		minHeartbeatInterval := h.config.HeartbeatInterval / 2 // Allow up to 2x frequency
+		
+		if timeSinceLastHeartbeat < minHeartbeatInterval {
+			h.logger.Warn("heartbeat flooding detected",
+				"time_since_last", timeSinceLastHeartbeat,
+				"min_interval", minHeartbeatInterval,
+				"sequence", hb.Sequence,
+			)
+			// Don't return error, just log and continue to prevent DoS
+		}
 	}
 	
 	// Log heartbeat received
 	h.logger.Debug("heartbeat received",
 		"timestamp_ms", hb.TimestampMs,
 		"sequence", hb.Sequence,
+		"client_time", time.UnixMilli(hb.TimestampMs),
+		"server_time", now,
 	)
 	
 	// Update last heartbeat time
-	h.lastHeartbeat = time.Now()
+	h.lastHeartbeat = now
 	
-	// Reset heartbeat timer
+	// Reset heartbeat timeout timer
 	if h.heartbeatTimer != nil {
 		h.heartbeatTimer.Reset(h.config.HeartbeatTimeout)
+		h.logger.Debug("heartbeat timer reset",
+			"timeout", h.config.HeartbeatTimeout,
+		)
 	}
 	
-	// Send pong response
+	// Send pong response with server timestamp
 	return h.conn.SendPong(hb.TimestampMs, hb.Sequence)
+}
+
+// handleHeartbeatTimeout handles heartbeat timeout by closing the connection.
+func (h *ConnectionHandler) handleHeartbeatTimeout() {
+	h.logger.Error("heartbeat timeout - closing connection",
+		"last_heartbeat", h.lastHeartbeat,
+		"timeout", h.config.HeartbeatTimeout,
+		"time_since_last", time.Since(h.lastHeartbeat),
+	)
+	
+	// Cancel the connection context to trigger graceful shutdown
+	if h.cancel != nil {
+		h.cancel()
+	}
+	
+	// Close the connection
+	if err := h.conn.Close(); err != nil {
+		h.logger.Error("failed to close connection after heartbeat timeout",
+			"error", err,
+		)
+	}
 }
 
 // handleSubscribe handles a subscription request.
