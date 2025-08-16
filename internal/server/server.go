@@ -34,6 +34,12 @@ type Config struct {
 	WriteTimeout    time.Duration
 	KeepAlive       time.Duration
 	
+	// TCP Performance settings
+	TCPReadBufferSize  int
+	TCPWriteBufferSize int
+	WriteDeadlineMS    int
+	MaxWriteQueueSize  int
+	
 	// Protocol settings
 	MaxMessageSize  uint32
 	
@@ -52,17 +58,21 @@ type Config struct {
 // DefaultConfig returns default server configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		ListenAddr:        ":8080",
-		MaxConnections:    100000,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      5 * time.Second,
-		KeepAlive:         30 * time.Second,
-		MaxMessageSize:    protocol.DefaultMaxMessageSize,
-		AuthTimeout:       10 * time.Second,
-		HeartbeatInterval: 15 * time.Second,
-		HeartbeatTimeout:  20 * time.Second,
-		BatchWindow:       5 * time.Millisecond,
-		MaxBatchSize:      100,
+		ListenAddr:         ":8080",
+		MaxConnections:     100000,
+		ReadTimeout:        30 * time.Second,
+		WriteTimeout:       5 * time.Second,
+		KeepAlive:          30 * time.Second,
+		TCPReadBufferSize:  65536,  // 64KB
+		TCPWriteBufferSize: 65536,  // 64KB
+		WriteDeadlineMS:    5000,   // 5s default
+		MaxWriteQueueSize:  1000,   // Max queued writes per connection
+		MaxMessageSize:     protocol.DefaultMaxMessageSize,
+		AuthTimeout:        10 * time.Second,
+		HeartbeatInterval:  15 * time.Second,
+		HeartbeatTimeout:   20 * time.Second,
+		BatchWindow:        5 * time.Millisecond,
+		MaxBatchSize:       100,
 	}
 }
 
@@ -90,6 +100,31 @@ func LoadConfigFromEnv(cfg *Config) {
 		}
 	}
 	
+	// TCP Performance settings
+	if readBufSize := os.Getenv("TCP_READ_BUFFER_SIZE"); readBufSize != "" {
+		if size, err := strconv.Atoi(readBufSize); err == nil {
+			cfg.TCPReadBufferSize = size
+		}
+	}
+	
+	if writeBufSize := os.Getenv("TCP_WRITE_BUFFER_SIZE"); writeBufSize != "" {
+		if size, err := strconv.Atoi(writeBufSize); err == nil {
+			cfg.TCPWriteBufferSize = size
+		}
+	}
+	
+	if writeDeadline := os.Getenv("WRITE_DEADLINE_MS"); writeDeadline != "" {
+		if ms, err := strconv.Atoi(writeDeadline); err == nil {
+			cfg.WriteDeadlineMS = ms
+		}
+	}
+	
+	if maxWriteQueue := os.Getenv("MAX_WRITE_QUEUE_SIZE"); maxWriteQueue != "" {
+		if size, err := strconv.Atoi(maxWriteQueue); err == nil {
+			cfg.MaxWriteQueueSize = size
+		}
+	}
+
 	if maxBatchSize := os.Getenv("MAX_BATCH_SIZE"); maxBatchSize != "" {
 		if size, err := strconv.Atoi(maxBatchSize); err == nil && size > 0 {
 			cfg.MaxBatchSize = size

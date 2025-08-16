@@ -110,8 +110,32 @@ func (h *ConnectionHandler) Handle(ctx context.Context) error {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return nil
 				}
-				if sendErr := h.conn.SendError(pb.ErrorCode_ERROR_CODE_INVALID_MESSAGE, err.Error()); sendErr != nil {
-					return sendErr
+				
+				// Log specific error types with appropriate detail
+				if errors.Is(err, protocol.ErrInvalidChecksum) {
+					h.logger.Error("checksum validation failed", 
+						"error", err,
+						"remote_addr", h.conn.RemoteAddr(),
+					)
+					if sendErr := h.conn.SendError(pb.ErrorCode_ERROR_CODE_CHECKSUM_FAILED, "frame checksum validation failed"); sendErr != nil {
+						h.logger.Error(errorSendFailedMsg, "error", sendErr)
+					}
+				} else if errors.Is(err, protocol.ErrInvalidMagic) {
+					h.logger.Error("invalid magic bytes received", 
+						"error", err,
+						"remote_addr", h.conn.RemoteAddr(),
+					)
+					if sendErr := h.conn.SendError(pb.ErrorCode_ERROR_CODE_INVALID_MESSAGE, "invalid frame format"); sendErr != nil {
+						h.logger.Error(errorSendFailedMsg, "error", sendErr)
+					}
+				} else {
+					h.logger.Error("frame read error", 
+						"error", err,
+						"remote_addr", h.conn.RemoteAddr(),
+					)
+					if sendErr := h.conn.SendError(pb.ErrorCode_ERROR_CODE_INVALID_MESSAGE, err.Error()); sendErr != nil {
+						h.logger.Error(errorSendFailedMsg, "error", sendErr)
+					}
 				}
 				return err
 			}
@@ -137,6 +161,16 @@ func (h *ConnectionHandler) Handle(ctx context.Context) error {
 
 // processFrame processes an incoming frame.
 func (h *ConnectionHandler) processFrame(ctx context.Context, frame *protocol.Frame) error {
+	// Validate message type first
+	if err := protocol.ValidateMessageType(frame.Type); err != nil {
+		h.logger.Error("invalid message type received", 
+			"type", frame.Type,
+			"error", err,
+			"remote_addr", h.conn.RemoteAddr(),
+		)
+		return err
+	}
+
 	switch frame.Type {
 	case protocol.MessageTypeHeartbeat:
 		return h.handleHeartbeat(frame)
@@ -163,12 +197,13 @@ func (h *ConnectionHandler) handleHeartbeat(frame *protocol.Frame) error {
 		return fmt.Errorf("failed to unmarshal heartbeat: %w", err)
 	}
 	
-	// Validate heartbeat fields
-	if hb.TimestampMs <= 0 {
-		h.logger.Warn("invalid heartbeat timestamp",
-			"timestamp_ms", hb.TimestampMs,
+	// Validate heartbeat request
+	if err := protocol.ValidateHeartbeatRequest(&hb); err != nil {
+		h.logger.Error("heartbeat validation failed",
+			"error", err,
+			"remote_addr", h.conn.RemoteAddr(),
 		)
-		return fmt.Errorf("invalid heartbeat timestamp: %d", hb.TimestampMs)
+		return fmt.Errorf("heartbeat validation failed: %w", err)
 	}
 	
 	now := time.Now()
@@ -248,6 +283,20 @@ func (h *ConnectionHandler) handleSubscribe(frame *protocol.Frame) error {
 		return fmt.Errorf("failed to unmarshal subscribe: %w", err)
 	}
 	
+	// Validate subscription request
+	if err := protocol.ValidateSubscribeRequest(&sub); err != nil {
+		h.logger.Error("subscription validation failed",
+			"error", err,
+			"remote_addr", h.conn.RemoteAddr(),
+		)
+		if sendErr := h.conn.SendErrorWithDetails(pb.ErrorCode_ERROR_CODE_INVALID_SUBSCRIPTION,
+			"Invalid subscription request",
+			fmt.Sprintf("Validation failed: %v", err)); sendErr != nil {
+			h.logger.Error(errorSendFailedMsg, "error", sendErr)
+		}
+		return fmt.Errorf("subscription validation failed: %w", err)
+	}
+	
 	// Log subscription attempt
 	h.logger.Info("subscription request received",
 		"mode", sub.Mode.String(),
@@ -255,7 +304,7 @@ func (h *ConnectionHandler) handleSubscribe(frame *protocol.Frame) error {
 		"start_time_ms", sub.StartTimeMs,
 	)
 	
-	// Validate subscription mode
+	// Validate subscription mode (redundant check, but kept for backward compatibility)
 	if sub.Mode != pb.SubscriptionMode_SUBSCRIPTION_MODE_SECOND && sub.Mode != pb.SubscriptionMode_SUBSCRIPTION_MODE_MINUTE {
 		h.logger.Warn("invalid subscription mode",
 			"mode", sub.Mode.String(),

@@ -14,6 +14,13 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// WriteQueueItem represents an item in the write queue
+type WriteQueueItem struct {
+	frame    *protocol.Frame
+	deadline time.Time
+	done     chan error
+}
+
 // Connection represents a client connection.
 type Connection struct {
 	id            string
@@ -21,6 +28,7 @@ type Connection struct {
 	reader        *protocol.FrameReader
 	writer        *protocol.FrameWriter
 	config        *Config
+	pools         *ObjectPools
 	
 	// Authentication
 	authenticated bool
@@ -31,26 +39,55 @@ type Connection struct {
 	closed        atomic.Bool
 	subscription  *Subscription
 	
+	// Write queue for async writes
+	writeQueue    chan *WriteQueueItem
+	writeQueueWg  sync.WaitGroup
+	
 	// Metrics
 	messagesRecv  uint64
 	messagesSent  uint64
 	bytesRecv     uint64
 	bytesSent     uint64
 	lastActivity  time.Time
+	writeQueueLen int32 // Atomic counter for queue length
 }
 
 // NewConnection creates a new connection wrapper.
 func NewConnection(conn net.Conn, config *Config) *Connection {
 	id := fmt.Sprintf("%s-%d", conn.RemoteAddr().String(), time.Now().UnixNano())
 	
-	return &Connection{
+	// Apply TCP optimizations
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		// Enable TCP_NODELAY to disable Nagle's algorithm for low latency
+		if err := tcpConn.SetNoDelay(true); err != nil {
+			// Log error but continue - not critical
+		}
+		
+		// Set optimized buffer sizes
+		if err := tcpConn.SetReadBuffer(config.TCPReadBufferSize); err != nil {
+			// Log error but continue
+		}
+		if err := tcpConn.SetWriteBuffer(config.TCPWriteBufferSize); err != nil {
+			// Log error but continue
+		}
+	}
+	
+	c := &Connection{
 		id:           id,
 		conn:         conn,
 		reader:       protocol.NewFrameReader(conn, config.MaxMessageSize),
 		writer:       protocol.NewFrameWriter(conn),
 		config:       config,
+		pools:        GetGlobalPools(),
+		writeQueue:   make(chan *WriteQueueItem, config.MaxWriteQueueSize),
 		lastActivity: time.Now(),
 	}
+	
+	// Start async write loop
+	c.writeQueueWg.Add(1)
+	go c.writeLoop()
+	
+	return c
 }
 
 // ID returns the connection ID.
@@ -60,6 +97,9 @@ func (c *Connection) ID() string {
 
 // RemoteAddr returns the remote address.
 func (c *Connection) RemoteAddr() string {
+	if c == nil || c.conn == nil {
+		return "unknown"
+	}
 	return c.conn.RemoteAddr().String()
 }
 
@@ -123,25 +163,9 @@ func (c *Connection) ReadFrame() (*protocol.Frame, error) {
 	return frame, nil
 }
 
-// WriteFrame writes a frame to the connection.
+// WriteFrame writes a frame to the connection using async write queue.
 func (c *Connection) WriteFrame(frame *protocol.Frame) error {
-	if c.closed.Load() {
-		return net.ErrClosed
-	}
-	
-	// Set write deadline
-	c.conn.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout))
-	defer c.conn.SetWriteDeadline(time.Time{})
-	
-	if err := c.writer.WriteFrame(frame); err != nil {
-		return err
-	}
-	
-	// Update metrics
-	atomic.AddUint64(&c.messagesSent, 1)
-	atomic.AddUint64(&c.bytesSent, uint64(len(frame.Payload)+protocol.FrameHeaderSize))
-	
-	return nil
+	return c.WriteFrameAsync(frame)
 }
 
 // SendMessage sends a protobuf message with the given type.
@@ -306,14 +330,134 @@ func (c *Connection) SetWriteDeadline(t time.Time) error {
 	return c.conn.SetWriteDeadline(t)
 }
 
-// Close closes the connection.
-func (c *Connection) Close() error {
-	if !c.closed.CompareAndSwap(false, true) {
-		return nil // Already closed
+// writeLoop handles asynchronous writes to prevent blocking
+func (c *Connection) writeLoop() {
+	defer c.writeQueueWg.Done()
+	
+	for item := range c.writeQueue {
+		// Check if connection is closed
+		if c.closed.Load() {
+			if item.done != nil {
+				item.done <- fmt.Errorf("connection closed")
+				close(item.done)
+			}
+			c.pools.PutFrame(item.frame)
+			atomic.AddInt32(&c.writeQueueLen, -1)
+			continue
+		}
+		
+		// Check if deadline has passed
+		if time.Now().After(item.deadline) {
+			if item.done != nil {
+				item.done <- fmt.Errorf("write deadline exceeded")
+				close(item.done)
+			}
+			c.pools.PutFrame(item.frame)
+			atomic.AddInt32(&c.writeQueueLen, -1)
+			continue
+		}
+		
+		// Set write deadline
+		c.conn.SetWriteDeadline(item.deadline)
+		
+		// Write frame
+		err := c.writer.WriteFrame(item.frame)
+		
+		// Update metrics
+		if err == nil {
+			atomic.AddUint64(&c.messagesSent, 1)
+			atomic.AddUint64(&c.bytesSent, uint64(len(item.frame.Payload)+protocol.FrameHeaderSize+protocol.CRCSize))
+		}
+		
+		// Signal completion
+		if item.done != nil {
+			item.done <- err
+			close(item.done)
+		}
+		
+		// Return frame to pool
+		c.pools.PutFrame(item.frame)
+		atomic.AddInt32(&c.writeQueueLen, -1)
+		
+		// Break on error to prevent further writes
+		if err != nil {
+			break
+		}
+	}
+}
+
+// WriteFrameAsync writes a frame asynchronously through the write queue
+func (c *Connection) WriteFrameAsync(frame *protocol.Frame) error {
+	if c == nil {
+		return fmt.Errorf("connection is nil")
 	}
 	
-	return c.conn.Close()
+	if c.closed.Load() {
+		return fmt.Errorf("connection closed")
+	}
+	
+	// Check queue capacity for backpressure
+	queueLen := atomic.LoadInt32(&c.writeQueueLen)
+	if int(queueLen) >= c.config.MaxWriteQueueSize {
+		return fmt.Errorf("write queue full - slow client detected")
+	}
+	
+	deadline := time.Now().Add(time.Duration(c.config.WriteDeadlineMS) * time.Millisecond)
+	item := &WriteQueueItem{
+		frame:    frame,
+		deadline: deadline,
+	}
+	
+	atomic.AddInt32(&c.writeQueueLen, 1)
+	
+	select {
+	case c.writeQueue <- item:
+		return nil
+	default:
+		atomic.AddInt32(&c.writeQueueLen, -1)
+		return fmt.Errorf("write queue full")
+	}
 }
+
+// WriteFrameSync writes a frame synchronously with deadline
+func (c *Connection) WriteFrameSync(frame *protocol.Frame) error {
+	if c.closed.Load() {
+		return fmt.Errorf("connection closed")
+	}
+	
+	deadline := time.Now().Add(time.Duration(c.config.WriteDeadlineMS) * time.Millisecond)
+	done := make(chan error, 1)
+	
+	item := &WriteQueueItem{
+		frame:    frame,
+		deadline: deadline,
+		done:     done,
+	}
+	
+	atomic.AddInt32(&c.writeQueueLen, 1)
+	
+	select {
+	case c.writeQueue <- item:
+		return <-done
+	case <-time.After(time.Duration(c.config.WriteDeadlineMS) * time.Millisecond):
+		atomic.AddInt32(&c.writeQueueLen, -1)
+		return fmt.Errorf("write timeout")
+	}
+}
+
+// Close closes the connection.
+func (c *Connection) Close() error {
+	if c.closed.CompareAndSwap(false, true) {
+		// Close write queue
+		close(c.writeQueue)
+		// Wait for write loop to finish
+		c.writeQueueWg.Wait()
+		return c.conn.Close()
+	}
+	return nil
+}
+
+// ...
 
 // GetStats returns connection statistics.
 func (c *Connection) GetStats() map[string]interface{} {

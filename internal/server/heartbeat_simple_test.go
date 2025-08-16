@@ -43,7 +43,7 @@ func TestHeartbeatValidation(t *testing.T) {
 	// This will fail because we don't have a real connection, but we can test validation
 	err = handler.handleHeartbeat(frame)
 	// We expect an error due to missing connection, but validation should pass
-	assert.Contains(t, err.Error(), "runtime error") // Expected due to nil connection
+	assert.Contains(t, err.Error(), "connection is nil") // Expected due to nil connection
 	
 	// Test invalid heartbeat (zero timestamp)
 	invalidHeartbeat := &pb.HeartbeatRequest{
