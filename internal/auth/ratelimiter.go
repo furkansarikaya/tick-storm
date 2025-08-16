@@ -30,10 +30,10 @@ func NewRateLimiter(maxAttempts int, window time.Duration) *RateLimiter {
 		window:      window,
 		attempts:    make(map[string]*attemptRecord),
 	}
-
+	
 	// Start cleanup goroutine
 	go rl.cleanup()
-
+	
 	return rl
 }
 
@@ -41,9 +41,9 @@ func NewRateLimiter(maxAttempts int, window time.Duration) *RateLimiter {
 func (rl *RateLimiter) Allow(clientAddr string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-
+	
 	now := time.Now()
-
+	
 	record, exists := rl.attempts[clientAddr]
 	if !exists {
 		// First attempt
@@ -54,12 +54,12 @@ func (rl *RateLimiter) Allow(clientAddr string) bool {
 		}
 		return true
 	}
-
+	
 	// Check if blocked
 	if record.blocked && now.Before(record.blockUntil) {
 		return false
 	}
-
+	
 	// Reset if outside window
 	if now.Sub(record.firstTime) > rl.window {
 		record.count = 1
@@ -68,18 +68,18 @@ func (rl *RateLimiter) Allow(clientAddr string) bool {
 		record.blocked = false
 		return true
 	}
-
+	
 	// Check attempt count
 	record.count++
 	record.lastTime = now
-
+	
 	if record.count > rl.maxAttempts {
 		// Block for extended period after exceeding attempts
 		record.blocked = true
 		record.blockUntil = now.Add(rl.window * 2) // Double the window for blocking
 		return false
 	}
-
+	
 	return true
 }
 
@@ -87,12 +87,12 @@ func (rl *RateLimiter) Allow(clientAddr string) bool {
 func (rl *RateLimiter) RecordFailure(clientAddr string) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-
+	
 	record, exists := rl.attempts[clientAddr]
 	if !exists {
 		return
 	}
-
+	
 	// Increase penalty for failures
 	if record.count >= rl.maxAttempts {
 		record.blocked = true
@@ -104,7 +104,7 @@ func (rl *RateLimiter) RecordFailure(clientAddr string) {
 func (rl *RateLimiter) Reset(clientAddr string) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-
+	
 	delete(rl.attempts, clientAddr)
 }
 
@@ -112,18 +112,18 @@ func (rl *RateLimiter) Reset(clientAddr string) {
 func (rl *RateLimiter) cleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
-
+	
 	for range ticker.C {
 		rl.mu.Lock()
 		now := time.Now()
-
+		
 		for addr, record := range rl.attempts {
 			// Remove entries older than 10 times the window
 			if now.Sub(record.lastTime) > rl.window*10 {
 				delete(rl.attempts, addr)
 			}
 		}
-
+		
 		rl.mu.Unlock()
 	}
 }
@@ -132,14 +132,14 @@ func (rl *RateLimiter) cleanup() {
 func (rl *RateLimiter) GetStats() map[string]interface{} {
 	rl.mu.RLock()
 	defer rl.mu.RUnlock()
-
+	
 	blockedCount := 0
 	for _, record := range rl.attempts {
 		if record.blocked && time.Now().Before(record.blockUntil) {
 			blockedCount++
 		}
 	}
-
+	
 	return map[string]interface{}{
 		"total_tracked": len(rl.attempts),
 		"blocked_count": blockedCount,

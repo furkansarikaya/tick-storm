@@ -17,19 +17,19 @@ import (
 var (
 	// ErrInvalidCredentials indicates authentication failed due to invalid credentials.
 	ErrInvalidCredentials = errors.New("invalid credentials")
-
+	
 	// ErrAuthRequired indicates authentication is required but not provided.
 	ErrAuthRequired = errors.New("authentication required")
-
+	
 	// ErrAlreadyAuthenticated indicates the connection is already authenticated.
 	ErrAlreadyAuthenticated = errors.New("already authenticated")
-
+	
 	// ErrAuthTimeout indicates authentication timed out.
 	ErrAuthTimeout = errors.New("authentication timeout")
-
+	
 	// ErrRateLimited indicates too many authentication attempts.
 	ErrRateLimited = errors.New("rate limited")
-
+	
 	// ErrFirstFrameMustBeAuth indicates the first frame must be an AUTH frame.
 	ErrFirstFrameMustBeAuth = errors.New("first frame must be AUTH")
 )
@@ -76,7 +76,7 @@ func NewAuthenticator(config *Config) *Authenticator {
 	if config == nil {
 		config = DefaultConfig()
 	}
-
+	
 	return &Authenticator{
 		config:      config,
 		rateLimiter: NewRateLimiter(config.MaxAttempts, config.RateLimitWindow),
@@ -98,7 +98,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, clientAddr string, fra
 	if !a.rateLimiter.Allow(clientAddr) {
 		return nil, ErrRateLimited
 	}
-
+	
 	// Check if already authenticated
 	a.mu.RLock()
 	if session, exists := a.sessions[clientAddr]; exists && session.Authenticated {
@@ -106,19 +106,19 @@ func (a *Authenticator) Authenticate(ctx context.Context, clientAddr string, fra
 		return nil, ErrAlreadyAuthenticated
 	}
 	a.mu.RUnlock()
-
+	
 	// Parse AUTH request
 	var authReq pb.AuthRequest
 	if err := proto.Unmarshal(frame.Payload, &authReq); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal auth request: %w", err)
 	}
-
+	
 	// Validate credentials
 	if authReq.Username != a.config.Username || authReq.Password != a.config.Password {
 		a.rateLimiter.RecordFailure(clientAddr)
 		return nil, ErrInvalidCredentials
 	}
-
+	
 	// Create session
 	session := &Session{
 		ClientID:      authReq.ClientId,
@@ -127,15 +127,15 @@ func (a *Authenticator) Authenticate(ctx context.Context, clientAddr string, fra
 		AuthTime:      time.Now(),
 		LastActivity:  time.Now(),
 	}
-
+	
 	// Store session
 	a.mu.Lock()
 	a.sessions[clientAddr] = session
 	a.mu.Unlock()
-
+	
 	// Reset rate limiter on successful auth
 	a.rateLimiter.Reset(clientAddr)
-
+	
 	return session, nil
 }
 
@@ -143,7 +143,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, clientAddr string, fra
 func (a *Authenticator) GetSession(clientAddr string) (*Session, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-
+	
 	session, exists := a.sessions[clientAddr]
 	return session, exists
 }
@@ -152,7 +152,7 @@ func (a *Authenticator) GetSession(clientAddr string) (*Session, bool) {
 func (a *Authenticator) RemoveSession(clientAddr string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
+	
 	delete(a.sessions, clientAddr)
 }
 
@@ -160,7 +160,7 @@ func (a *Authenticator) RemoveSession(clientAddr string) {
 func (a *Authenticator) UpdateActivity(clientAddr string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
+	
 	if session, exists := a.sessions[clientAddr]; exists {
 		session.LastActivity = time.Now()
 	}
@@ -170,7 +170,7 @@ func (a *Authenticator) UpdateActivity(clientAddr string) {
 func (a *Authenticator) IsAuthenticated(clientAddr string) bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-
+	
 	session, exists := a.sessions[clientAddr]
 	return exists && session.Authenticated
 }
@@ -183,7 +183,7 @@ func CreateAckResponse() *protocol.Frame {
 		Message:     "Authentication successful",
 		TimestampMs: time.Now().UnixMilli(),
 	}
-
+	
 	payload, _ := proto.Marshal(ack)
 	return &protocol.Frame{
 		Version: protocol.ProtocolVersion,

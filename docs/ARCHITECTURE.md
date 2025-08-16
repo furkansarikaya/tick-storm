@@ -1,10 +1,10 @@
-# TickStorm Architecture Design Document
+# Tick-Storm Architecture Design Document
 
 ## High-Level Architecture
 
 ```
 ┌─────────────┐     ┌─────────────────┐     ┌──────────────────┐
-│   Clients   │────▶│  L4 TCP Load    │────▶│  TickStorm       │
+│   Clients   │────▶│  L4 TCP Load    │────▶│  Tick-Storm      │
 │  (100k+)    │     │    Balancer     │     │  Server Pool     │
 └─────────────┘     └─────────────────┘     └──────────────────┘
                            │                         │
@@ -31,12 +31,12 @@
     - server2:8080
     - serverN:8080
   health_check:
-    interval: 10s
-    timeout: 5s
-    unhealthy_threshold: 5
+    interval: 5s
+    timeout: 2s
+    unhealthy_threshold: 3
   ```
 
-### 2. TickStorm Server Instances
+### 2. Tick-Storm Server Instances
 - **Deployment:** Stateless, horizontally scalable
 - **Concurrency Model:** Goroutine-per-connection
 - **Resource Limits:** 
