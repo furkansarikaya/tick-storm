@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  tick-storm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tick-storm:latest
+    container_name: tick-storm-server
+    ports:
+      - "8080:8080"
+    environment:
+      # Server configuration
+      - LISTEN_ADDR=0.0.0.0:8080
+      - MAX_CONNECTIONS=10000
+      - WRITE_DEADLINE_MS=5000
+      - HEARTBEAT_TIMEOUT_MS=20000
+      - HEARTBEAT_INTERVAL_MS=15000
+      
+      # Performance tuning
+      - TCP_READ_BUFFER_SIZE=65536
+      - TCP_WRITE_BUFFER_SIZE=65536
+      - MAX_WRITE_QUEUE_SIZE=1000
+      - BATCH_WINDOW_MS=5
+      
+      # Authentication (example - change in production)
+      - AUTH_USERNAME=admin
+      - AUTH_PASSWORD=secure123
+      
+      # TLS configuration (optional)
+      - TLS_ENABLED=false
+      # - TLS_CERT_FILE=/certs/server.crt
+      # - TLS_KEY_FILE=/certs/server.key
+      # - TLS_CLIENT_AUTH=none
+      
+      # Logging
+      - LOG_LEVEL=info
+      
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    
+    # Health check
+    healthcheck:
+      test: ["/tick-storm", "-health-check"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Security
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    
+    # Volumes for TLS certificates (if needed)
+    # volumes:
+    #   - ./certs:/certs:ro
+    
+    # Networks
+    networks:
+      - tick-storm-network
+
+networks:
+  tick-storm-network:
+    driver: bridge

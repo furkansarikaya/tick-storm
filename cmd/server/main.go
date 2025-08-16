@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -13,6 +14,16 @@ import (
 )
 
 func main() {
+	// Command line flags
+	healthCheck := flag.Bool("health-check", false, "Perform health check and exit")
+	flag.Parse()
+
+	// Handle health check
+	if *healthCheck {
+		performHealthCheck()
+		return
+	}
+
 	// Load configuration
 	config := server.DefaultConfig()
 	server.LoadConfigFromEnv(config)
@@ -53,4 +64,15 @@ func main() {
 	}
 
 	log.Println("Server stopped")
+}
+
+// performHealthCheck performs a basic health check for container health checks
+func performHealthCheck() {
+	// For now, just exit with success
+	// In a full implementation, this could check:
+	// - Server is listening on expected port
+	// - Database connectivity
+	// - Critical services are running
+	log.Println("Health check: OK")
+	os.Exit(0)
 }

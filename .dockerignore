@@ -1,0 +1,38 @@
+# Git files
+.git
+.gitignore
+
+# Documentation
+*.md
+docs/
+documentions/
+
+# Development files
+.vscode/
+.idea/
+
+# Test files
+*_test.go
+testdata/
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+server
+test-client
+
+# Temporary files
+*.tmp
+*.log
+.DS_Store
+
+# CI/CD files
+.github/
+
+# Scripts
+scripts/
+
+# Go module cache
+go.sum
