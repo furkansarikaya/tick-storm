@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -34,6 +35,9 @@ type Config struct {
 	WriteTimeout    time.Duration
 	KeepAlive       time.Duration
 	
+	// TLS settings
+	TLS             *TLSConfig
+	
 	// TCP Performance settings
 	TCPReadBufferSize  int
 	TCPWriteBufferSize int
@@ -63,6 +67,7 @@ func DefaultConfig() *Config {
 		ReadTimeout:        30 * time.Second,
 		WriteTimeout:       5 * time.Second,
 		KeepAlive:          30 * time.Second,
+		TLS:                DefaultTLSConfig(),
 		TCPReadBufferSize:  65536,  // 64KB
 		TCPWriteBufferSize: 65536,  // 64KB
 		WriteDeadlineMS:    5000,   // 5s default
@@ -80,6 +85,11 @@ func DefaultConfig() *Config {
 func LoadConfigFromEnv(cfg *Config) {
 	if port := os.Getenv("LISTEN_PORT"); port != "" {
 		cfg.ListenAddr = ":" + port
+	}
+	
+	// Load TLS configuration from environment
+	if cfg.TLS != nil {
+		LoadTLSConfigFromEnv(cfg.TLS)
 	}
 	
 	if interval := os.Getenv("HEARTBEAT_INTERVAL"); interval != "" {
@@ -159,6 +169,7 @@ type Server struct {
 	totalConns     uint64
 	authSuccess    uint64
 	authFailures   uint64
+	tlsMetrics     *TLSMetrics
 }
 
 // NewServer creates a new TCP server.
@@ -177,6 +188,7 @@ func NewServer(config *Config) *Server {
 		connections:   make(map[string]*Connection),
 		ctx:           ctx,
 		cancel:        cancel,
+		tlsMetrics:    NewTLSMetrics(),
 	}
 }
 
@@ -186,10 +198,17 @@ func (s *Server) Start() error {
 		return ErrServerClosed
 	}
 	
-	// Create listener with support for both IPv4 and IPv6
-	listener, err := net.Listen("tcp", s.config.ListenAddr)
+	// Validate TLS configuration if enabled
+	if s.config.TLS != nil {
+		if err := s.config.TLS.ValidateTLSConfig(); err != nil {
+			return fmt.Errorf("TLS configuration validation failed: %w", err)
+		}
+	}
+	
+	// Create listener with TLS support if enabled
+	listener, err := s.createListener()
 	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", s.config.ListenAddr, err)
+		return fmt.Errorf("failed to create listener: %w", err)
 	}
 	
 	s.listener = listener
@@ -199,6 +218,28 @@ func (s *Server) Start() error {
 	go s.acceptLoop()
 	
 	return nil
+}
+
+// createListener creates a network listener with optional TLS support
+func (s *Server) createListener() (net.Listener, error) {
+	// Create base TCP listener
+	listener, err := net.Listen("tcp", s.config.ListenAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to listen on %s: %w", s.config.ListenAddr, err)
+	}
+	
+	// Wrap with TLS if enabled
+	if s.config.TLS != nil && s.config.TLS.Enabled {
+		tlsConfig, err := s.config.TLS.BuildTLSConfig()
+		if err != nil {
+			listener.Close()
+			return nil, fmt.Errorf("failed to build TLS config: %w", err)
+		}
+		
+		return tls.NewListener(listener, tlsConfig), nil
+	}
+	
+	return listener, nil
 }
 
 // Stop gracefully stops the server.
@@ -268,6 +309,25 @@ func (s *Server) acceptLoop() {
 // handleConnection handles a single client connection.
 func (s *Server) handleConnection(netConn net.Conn) {
 	defer s.wg.Done()
+	
+	// Record TLS connection metrics if applicable
+	if tlsConn, ok := netConn.(*tls.Conn); ok {
+		s.tlsMetrics.RecordTLSConnection()
+		
+		// Perform handshake and record metrics
+		start := time.Now()
+		err := tlsConn.Handshake()
+		handshakeDuration := time.Since(start)
+		
+		s.tlsMetrics.RecordTLSHandshake(handshakeDuration, err)
+		
+		if err == nil {
+			// Record TLS version and cipher suite
+			state := tlsConn.ConnectionState()
+			s.tlsMetrics.RecordTLSVersion(state.Version)
+			s.tlsMetrics.RecordCipherSuite(state.CipherSuite)
+		}
+	}
 	
 	// Update metrics
 	atomic.AddInt32(&s.activeConns, 1)
@@ -389,7 +449,7 @@ func (s *Server) closeAllConnections() {
 
 // GetStats returns server statistics.
 func (s *Server) GetStats() map[string]interface{} {
-	return map[string]interface{}{
+	stats := map[string]interface{}{
 		"active_connections":  atomic.LoadInt32(&s.activeConns),
 		"total_connections":   atomic.LoadUint64(&s.totalConns),
 		"auth_success":        atomic.LoadUint64(&s.authSuccess),
@@ -397,6 +457,15 @@ func (s *Server) GetStats() map[string]interface{} {
 		"max_connections":     s.config.MaxConnections,
 		"listen_addr":         s.config.ListenAddr,
 	}
+	
+	// Add TLS metrics if TLS is enabled
+	if s.config.TLS != nil && s.config.TLS.Enabled {
+		stats["tls"] = s.tlsMetrics.GetTLSMetrics()
+		stats["tls_health"] = s.tlsMetrics.GetTLSHealthStatus()
+		stats["tls_config"] = s.config.TLS.GetTLSInfo()
+	}
+	
+	return stats
 }
 
 // ListenAddr returns the server's listen address.

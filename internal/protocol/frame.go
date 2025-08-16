@@ -207,9 +207,8 @@ func (r *FrameReader) ReadFrame() (*Frame, error) {
 	}
 
 	// Extract frame details
-	version := header[2]
-	if version != ProtocolVersion {
-		return nil, ErrUnsupportedVersion
+	if err := ValidateVersion(header[2]); err != nil {
+		return nil, fmt.Errorf("version validation failed: %w", err)
 	}
 
 	msgType := header[3]
@@ -237,7 +236,7 @@ func (r *FrameReader) ReadFrame() (*Frame, error) {
 
 	// Create frame
 	frame := &Frame{
-		Version: version,
+		Version: header[2],
 		Type:    MessageType(msgType),
 		Payload: make([]byte, payloadLen),
 	}
