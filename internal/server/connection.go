@@ -185,51 +185,65 @@ func (c *Connection) SendAuthError() error {
 	return c.WriteFrame(frame)
 }
 
-// SendError sends an error message.
+// SendError sends an error message with optional details.
 func (c *Connection) SendError(code pb.ErrorCode, message string) error {
+	return c.SendErrorWithDetails(code, message, "")
+}
+
+// SendErrorWithDetails sends an error message with detailed information.
+func (c *Connection) SendErrorWithDetails(code pb.ErrorCode, message, details string) error {
 	errMsg := &pb.ErrorResponse{
 		Code:        code,
 		Message:     message,
+		Details:     details,
 		TimestampMs: time.Now().UnixMilli(),
 	}
 	
 	frame, err := protocol.MarshalMessage(protocol.MessageTypeError, errMsg)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal error response: %w", err)
 	}
 	return c.WriteFrame(frame)
 }
 
-// SendErrorCode sends a predefined error.
+// SendErrorCode sends a predefined error with standard message.
 func (c *Connection) SendErrorCode(code pb.ErrorCode) error {
-	var message string
+	message, details := getStandardErrorMessage(code)
+	return c.SendErrorWithDetails(code, message, details)
+}
+
+// getStandardErrorMessage returns standard error messages and details for error codes.
+func getStandardErrorMessage(code pb.ErrorCode) (message, details string) {
 	switch code {
 	case pb.ErrorCode_ERROR_CODE_INVALID_AUTH:
-		message = "Authentication failed"
-	case pb.ErrorCode_ERROR_CODE_INVALID_MESSAGE:
-		message = "Protocol error"
+		return "Authentication failed", "Invalid username or password provided"
 	case pb.ErrorCode_ERROR_CODE_AUTH_REQUIRED:
-		message = "Authentication timeout"
-	case pb.ErrorCode_ERROR_CODE_HEARTBEAT_TIMEOUT:
-		message = "Heartbeat timeout"
+		return "Authentication required", "AUTH frame must be the first message sent"
+	case pb.ErrorCode_ERROR_CODE_ALREADY_AUTHENTICATED:
+		return "Already authenticated", "Connection has already been authenticated"
 	case pb.ErrorCode_ERROR_CODE_INVALID_SUBSCRIPTION:
-		message = "Invalid subscription"
+		return "Invalid subscription request", "Subscription mode or parameters are invalid"
+	case pb.ErrorCode_ERROR_CODE_ALREADY_SUBSCRIBED:
+		return "Already subscribed", "Connection already has an active subscription"
+	case pb.ErrorCode_ERROR_CODE_NOT_SUBSCRIBED:
+		return "Not subscribed", "No active subscription found for this connection"
+	case pb.ErrorCode_ERROR_CODE_HEARTBEAT_TIMEOUT:
+		return "Heartbeat timeout", "Client failed to send heartbeat within configured interval"
+	case pb.ErrorCode_ERROR_CODE_INVALID_MESSAGE:
+		return "Invalid message format", "Message could not be parsed or contains invalid data"
+	case pb.ErrorCode_ERROR_CODE_CHECKSUM_FAILED:
+		return "Checksum validation failed", "Frame CRC32C checksum does not match calculated value"
+	case pb.ErrorCode_ERROR_CODE_PROTOCOL_VERSION:
+		return "Unsupported protocol version", "Client protocol version is not supported by server"
+	case pb.ErrorCode_ERROR_CODE_MESSAGE_TOO_LARGE:
+		return "Message too large", "Message size exceeds maximum allowed limit"
 	case pb.ErrorCode_ERROR_CODE_RATE_LIMITED:
-		message = "Rate limited"
+		return "Rate limited", "Too many requests sent within the allowed time window"
+	case pb.ErrorCode_ERROR_CODE_INTERNAL_ERROR:
+		return "Internal server error", "An unexpected error occurred on the server"
 	default:
-		message = "Unknown error"
+		return "Unknown error", "An unrecognized error code was encountered"
 	}
-	errMsg := &pb.ErrorResponse{
-		Code:        code,
-		Message:     message,
-		TimestampMs: time.Now().UnixMilli(),
-	}
-	
-	frame, err := protocol.MarshalMessage(protocol.MessageTypeError, errMsg)
-	if err != nil {
-		return err
-	}
-	return c.WriteFrame(frame)
 }
 
 // SendSubscriptionConfirmed sends subscription confirmation.

@@ -9,9 +9,14 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/furkansarikaya/tick-storm/internal/protocol"
-	"github.com/furkansarikaya/tick-storm/internal/protocol/pb"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/furkansarikaya/tick-storm/internal/protocol"
+	pb "github.com/furkansarikaya/tick-storm/internal/protocol/pb"
+)
+
+const (
+	errorSendFailedMsg = "failed to send error response"
 )
 
 // ConnectionHandler handles the connection lifecycle
@@ -234,6 +239,12 @@ func (h *ConnectionHandler) handleSubscribe(frame *protocol.Frame) error {
 		h.logger.Error("failed to unmarshal subscribe request",
 			"error", err,
 		)
+		// Send protocol error to client
+		if sendErr := h.conn.SendErrorWithDetails(pb.ErrorCode_ERROR_CODE_INVALID_MESSAGE,
+			"Invalid subscription request format",
+			fmt.Sprintf("Failed to parse subscription request: %v", err)); sendErr != nil {
+			h.logger.Error(errorSendFailedMsg, "error", sendErr)
+		}
 		return fmt.Errorf("failed to unmarshal subscribe: %w", err)
 	}
 	
@@ -249,6 +260,12 @@ func (h *ConnectionHandler) handleSubscribe(frame *protocol.Frame) error {
 		h.logger.Warn("invalid subscription mode",
 			"mode", sub.Mode.String(),
 		)
+		// Send error response to client
+		if err := h.conn.SendErrorWithDetails(pb.ErrorCode_ERROR_CODE_INVALID_SUBSCRIPTION, 
+			"Invalid subscription mode", 
+			fmt.Sprintf("Mode '%s' is not supported. Use SECOND or MINUTE", sub.Mode.String())); err != nil {
+			h.logger.Error(errorSendFailedMsg, "error", err)
+		}
 		return protocol.ErrInvalidSubscription
 	}
 	
@@ -261,11 +278,21 @@ func (h *ConnectionHandler) handleSubscribe(frame *protocol.Frame) error {
 				"current_mode", existingSub.Mode.String(),
 				"requested_mode", sub.Mode.String(),
 			)
+			// Send error response to client
+			if err := h.conn.SendErrorWithDetails(pb.ErrorCode_ERROR_CODE_INVALID_SUBSCRIPTION,
+				"Subscription mode switching not allowed",
+				fmt.Sprintf("Already subscribed to %s mode. Cannot switch to %s", existingSub.Mode.String(), sub.Mode.String())); err != nil {
+				h.logger.Error(errorSendFailedMsg, "error", err)
+			}
 			return fmt.Errorf("subscription mode switching not allowed: already subscribed to %s mode", existingSub.Mode.String())
 		}
 		h.logger.Warn("duplicate subscription attempt",
 			"existing_mode", existingSub.Mode.String(),
 		)
+		// Send error response to client
+		if err := h.conn.SendErrorCode(pb.ErrorCode_ERROR_CODE_ALREADY_SUBSCRIBED); err != nil {
+			h.logger.Error(errorSendFailedMsg, "error", err)
+		}
 		return protocol.ErrAlreadySubscribed
 	}
 	
