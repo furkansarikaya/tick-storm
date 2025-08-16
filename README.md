@@ -1,10 +1,13 @@
 # TickStorm - High-Performance TCP Stream Server
 
-[![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://golang.org/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker)](https://www.docker.com/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+*Built for performance, designed for scale.*
 
-TickStorm is a high-performance TCP stream server written in Go that delivers time-based tick data using binary framing with Protobuf serialization. Designed for financial data streaming with sub-millisecond latency and support for 100k+ concurrent connections.
+[![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://golang.org/)
+[![Performance](https://img.shields.io/badge/Latency-<1ms-0066CC?style=flat)](https://github.com/furkansarikaya/tick-storm)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker)](https://www.docker.com/)
+[![License](https://img.shields.io/badge/License-MIT-38A169?style=flat)](LICENSE)
+
+**TickStorm** is a high-performance TCP stream server written in Go that delivers time-based tick data using binary framing with Protobuf serialization. Designed for financial data streaming with sub-millisecond latency and support for 100k+ concurrent connections.
 
 ## 🚀 Features
 

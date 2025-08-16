@@ -1,10 +1,10 @@
-# Tick-Storm Architecture Design Document
+# TickStorm Architecture Design Document
 
 ## High-Level Architecture
 
 ```
 ┌─────────────┐     ┌─────────────────┐     ┌──────────────────┐
-│   Clients   │────▶│  L4 TCP Load    │────▶│  Tick-Storm      │
+│   Clients   │────▶│  L4 TCP Load    │────▶│  TickStorm       │
 │  (100k+)    │     │    Balancer     │     │  Server Pool     │
 └─────────────┘     └─────────────────┘     └──────────────────┘
                            │                         │
@@ -36,13 +36,13 @@
     unhealthy_threshold: 3
   ```
 
-### 2. Tick-Storm Server Instances
+### 2. TickStorm Server Componentstances
 - **Deployment:** Stateless, horizontally scalable
 - **Concurrency Model:** Goroutine-per-connection
 - **Resource Limits:** 
   - Max connections: 100k per instance
   - Memory: < 1GB per instance
-  - CPU: < 70% utilization at peak
+  - CPU: < 70% utilizationThe TickStorm server is built using a modular architecture
 
 ## Internal Module Architecture
 
@@ -220,7 +220,7 @@ graph TD
 - Client connections distributed by load balancer
 - Target: 100k connections per server instance
 
-### Performance Optimizations
+### TickStorm Optimizations
 - Connection pooling with sync.Pool
 - Buffer reuse for frame processing
 - Goroutine-per-connection with controlled spawning
@@ -233,7 +233,7 @@ graph TD
 - CPU throttling via GOMAXPROCS
 - File descriptor limits (ulimit)
 
-## Deployment Architecture
+## TickStorm Deployment Architecture
 
 ### Container Deployment
 ```dockerfile
@@ -285,32 +285,6 @@ spec:
               key: password
 ```
 
-## Architecture Decisions Record (ADR)
-
-### ADR-001: Goroutine-per-connection Model
-**Status:** Accepted  
-**Context:** Need to handle 100k+ concurrent connections  
-**Decision:** Use goroutine-per-connection for simplicity  
-**Consequences:** Higher memory usage but simpler code  
-
-### ADR-002: Stateless Server Design
-**Status:** Accepted  
-**Context:** Need horizontal scalability  
-**Decision:** No shared state between connections  
-**Consequences:** Easy scaling, no session affinity needed  
-
-### ADR-003: Binary Protocol with Protobuf
-**Status:** Accepted  
-**Context:** Need low latency and efficient serialization  
-**Decision:** Custom binary framing with Protobuf payloads  
-**Consequences:** Lower overhead than text protocols  
-
-### ADR-004: Micro-batching Strategy
-**Status:** Accepted  
-**Context:** Balance between latency and throughput  
-**Decision:** 5ms batching window by default  
-**Consequences:** Reduced per-message overhead  
-
 ## Security Architecture
 
 ### Network Security
@@ -325,7 +299,7 @@ spec:
 - Input validation on all frames
 - CRC32C integrity checking
 
-## Monitoring & Observability
+## TickStorm Monitoring & Observability
 
 ### Health Checks
 - TCP connection test endpoint
