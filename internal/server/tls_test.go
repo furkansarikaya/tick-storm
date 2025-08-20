@@ -16,8 +16,8 @@ func TestDefaultTLSConfig(t *testing.T) {
 	require.NotNil(t, cfg)
 	
 	assert.False(t, cfg.Enabled)
-	assert.Equal(t, tls.VersionTLS13, cfg.MinVersion)
-	assert.Equal(t, tls.VersionTLS13, cfg.MaxVersion)
+	assert.Equal(t, uint16(tls.VersionTLS13), cfg.MinVersion)
+	assert.Equal(t, uint16(tls.VersionTLS13), cfg.MaxVersion)
 	assert.Equal(t, tls.NoClientCert, cfg.ClientAuth)
 	assert.False(t, cfg.OCSPEnabled)
 	assert.False(t, cfg.InsecureSkipVerify)

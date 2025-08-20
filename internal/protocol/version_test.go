@@ -74,7 +74,7 @@ func TestGetVersion(t *testing.T) {
 func TestGetCurrentVersion(t *testing.T) {
 	version := GetCurrentVersion()
 	require.NotNil(t, version)
-	assert.Equal(t, CurrentProtocolVersion, version.Number)
+	assert.Equal(t, uint8(CurrentProtocolVersion), version.Number)
 }
 
 func TestValidateVersion(t *testing.T) {

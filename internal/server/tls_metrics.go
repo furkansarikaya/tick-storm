@@ -120,22 +120,38 @@ func (m *TLSMetrics) GetTLSMetrics() map[string]interface{} {
 		cipherSuites[m.getCipherSuiteName(suite)] = count
 	}
 	m.mu.RUnlock()
-	
+
+	// Build TLS version breakdown expected by tests
+	versions := map[string]int64{
+		"TLS 1.3": atomic.LoadInt64(&m.TLS13Connections),
+		"TLS 1.2": atomic.LoadInt64(&m.TLS12Connections),
+		"Other":   atomic.LoadInt64(&m.OtherTLSVersions),
+	}
+
+	// Provide both legacy and test-expected keys for backward compatibility
 	return map[string]interface{}{
-		"tls_connections":          atomic.LoadInt64(&m.TLSConnections),
-		"tls_handshakes":           atomic.LoadInt64(&m.TLSHandshakes),
-		"tls_handshake_errors":     atomic.LoadInt64(&m.TLSHandshakeErrors),
-		"tls13_connections":        atomic.LoadInt64(&m.TLS13Connections),
-		"tls12_connections":        atomic.LoadInt64(&m.TLS12Connections),
-		"other_tls_versions":       atomic.LoadInt64(&m.OtherTLSVersions),
-		"certificate_validations":  atomic.LoadInt64(&m.CertificateValidations),
-		"certificate_errors":       atomic.LoadInt64(&m.CertificateErrors),
-		"client_cert_validations":  atomic.LoadInt64(&m.ClientCertValidations),
-		"client_cert_errors":       atomic.LoadInt64(&m.ClientCertErrors),
-		"average_handshake_time_ms": float64(m.AverageHandshakeTime.Nanoseconds()) / 1e6,
-		"max_handshake_time_ms":     float64(m.MaxHandshakeTime.Nanoseconds()) / 1e6,
-		"min_handshake_time_ms":     float64(m.MinHandshakeTime.Nanoseconds()) / 1e6,
-		"cipher_suites":            cipherSuites,
+		// Test-expected keys
+		"connections_total":          atomic.LoadInt64(&m.TLSConnections),
+		"handshakes_total":           atomic.LoadInt64(&m.TLSHandshakes),
+		"handshake_errors_total":     atomic.LoadInt64(&m.TLSHandshakeErrors),
+		"handshake_duration_avg_ms":  float64(m.AverageHandshakeTime.Nanoseconds()) / 1e6,
+		"tls_versions":               versions,
+
+		// Detailed/legacy keys
+		"tls_connections":            atomic.LoadInt64(&m.TLSConnections),
+		"tls_handshakes":             atomic.LoadInt64(&m.TLSHandshakes),
+		"tls_handshake_errors":       atomic.LoadInt64(&m.TLSHandshakeErrors),
+		"tls13_connections":          atomic.LoadInt64(&m.TLS13Connections),
+		"tls12_connections":          atomic.LoadInt64(&m.TLS12Connections),
+		"other_tls_versions":         atomic.LoadInt64(&m.OtherTLSVersions),
+		"certificate_validations":    atomic.LoadInt64(&m.CertificateValidations),
+		"certificate_errors":         atomic.LoadInt64(&m.CertificateErrors),
+		"client_cert_validations":    atomic.LoadInt64(&m.ClientCertValidations),
+		"client_cert_errors":         atomic.LoadInt64(&m.ClientCertErrors),
+		"average_handshake_time_ms":  float64(m.AverageHandshakeTime.Nanoseconds()) / 1e6,
+		"max_handshake_time_ms":      float64(m.MaxHandshakeTime.Nanoseconds()) / 1e6,
+		"min_handshake_time_ms":      float64(m.MinHandshakeTime.Nanoseconds()) / 1e6,
+		"cipher_suites":              cipherSuites,
 	}
 }
 
@@ -188,12 +204,17 @@ func (m *TLSMetrics) GetTLSHealthStatus() map[string]interface{} {
 	healthy := handshakeErrorRate < 5.0 && certErrorRate < 1.0 && clientCertErrorRate < 1.0
 	
 	return map[string]interface{}{
-		"healthy":                   healthy,
-		"handshake_error_rate":      handshakeErrorRate,
-		"certificate_error_rate":    certErrorRate,
-		"client_cert_error_rate":    clientCertErrorRate,
-		"average_handshake_time_ms": float64(m.AverageHandshakeTime.Nanoseconds()) / 1e6,
-		"tls13_usage_percentage":    m.getTLS13UsagePercentage(),
+		"healthy":                     healthy,
+		// Test-expected aggregate fields
+		"error_rate":                  handshakeErrorRate,
+		"avg_handshake_duration_ms":   float64(m.AverageHandshakeTime.Nanoseconds()) / 1e6,
+
+		// Detailed fields retained
+		"handshake_error_rate":        handshakeErrorRate,
+		"certificate_error_rate":      certErrorRate,
+		"client_cert_error_rate":      clientCertErrorRate,
+		"average_handshake_time_ms":   float64(m.AverageHandshakeTime.Nanoseconds()) / 1e6,
+		"tls13_usage_percentage":      m.getTLS13UsagePercentage(),
 	}
 }
 

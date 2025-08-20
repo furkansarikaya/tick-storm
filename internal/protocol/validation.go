@@ -413,18 +413,16 @@ func validateMetadata(metadata map[string]string, fieldName string) error {
 
 // SanitizeString sanitizes string input by trimming whitespace and removing control characters
 func SanitizeString(input string) string {
-	// Trim whitespace
-	sanitized := strings.TrimSpace(input)
-	
-	// Remove control characters except newlines and tabs
-	var result strings.Builder
-	for _, r := range sanitized {
-		if r >= 32 || r == '\n' || r == '\t' {
-			result.WriteRune(r)
-		}
-	}
-	
-	return result.String()
+    // Remove control characters except newlines and tabs
+    var cleaned strings.Builder
+    for _, r := range input {
+        if r >= 32 || r == '\n' || r == '\t' {
+            cleaned.WriteRune(r)
+        }
+    }
+
+    // Trim only space characters from both ends (preserve tabs/newlines)
+    return strings.Trim(cleaned.String(), " ")
 }
 
 // ValidateMessageType validates if a message type is known and supported
