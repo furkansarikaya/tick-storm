@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -227,6 +228,11 @@ type Server struct {
 	// Security
 	ipFilter       *IPFilter
 	ddosProtection *DDoSProtection
+	
+	// Resource management
+	resourceMonitor     *ResourceMonitor
+	resourceConstraints *ResourceConstraints
+	breachHandler       *ResourceBreachHandler
 }
 
 // NewServer creates a new TCP server.
@@ -239,7 +245,7 @@ func NewServer(config *Config) *Server {
 	
 	ctx, cancel := context.WithCancel(context.Background())
 	
-	return &Server{
+	s := &Server{
 		config:         config,
 		authenticator:  auth.NewAuthenticator(auth.DefaultConfig()),
 		connections:    make(map[string]*Connection),
@@ -248,6 +254,22 @@ func NewServer(config *Config) *Server {
 		tlsMetrics:     NewTLSMetrics(),
 		ddosProtection: NewDDoSProtection(),
 	}
+	
+	// Initialize resource management components
+	logger := slog.Default()
+	limits := ResourceLimits{
+		MaxMemoryMB:       1024,  // 1GB default
+		MaxFileDescriptors: 65536, // 64K file descriptors
+		MaxGoroutines:     50000,  // 50K goroutines
+		MaxConnections:    100000, // 100K connections
+		WarningThreshold:  0.8,    // 80% warning
+		CriticalThreshold: 0.9,    // 90% critical
+	}
+	s.resourceMonitor = NewResourceMonitor(limits)
+	s.resourceConstraints = NewResourceConstraints()
+	s.breachHandler = NewResourceBreachHandler(logger, s.resourceMonitor)
+	
+	return s
 }
 
 // Start starts the TCP server.
@@ -280,6 +302,14 @@ func (s *Server) Start() error {
 	
 	// Start DDoS protection cleanup routine
 	s.ddosProtection.StartCleanupRoutine()
+	
+	// Start resource monitoring services
+	if s.resourceMonitor != nil {
+		s.resourceMonitor.Start()
+	}
+	if s.breachHandler != nil {
+		go s.breachHandler.StartMonitoring(s.ctx)
+	}
 	
 	// Start accepting connections
 	s.wg.Add(1)
@@ -375,6 +405,12 @@ func (s *Server) acceptLoop() {
 		// Check DDoS protection
 		if !s.ddosProtection.CheckConnectionAllowed(conn.RemoteAddr()) {
 			conn.Close()
+			continue
+		}
+		
+		// Check resource breach handler
+		if s.breachHandler != nil && s.breachHandler.ShouldRejectConnection() {
+			s.breachHandler.RejectConnection(conn)
 			continue
 		}
 
@@ -567,6 +603,14 @@ func (s *Server) GetStats() map[string]interface{} {
 		ddosMetrics := s.ddosProtection.GetMetrics()
 		for k, v := range ddosMetrics {
 			stats["ddos_"+k] = v
+		}
+	}
+	
+	// Add resource breach handler metrics
+	if s.breachHandler != nil {
+		breachStats := s.breachHandler.GetBreachStats()
+		for k, v := range breachStats {
+			stats["resource_"+k] = v
 		}
 	}
 	

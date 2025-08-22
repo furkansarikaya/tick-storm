@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tick-storm-config
+  namespace: tick-storm
+  labels:
+    app: tick-storm
+data:
+  # Network security configuration
+  ip-allowlist: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  ip-blocklist: ""
+  
+  # Performance tuning
+  tcp-read-buffer-size: "65536"
+  tcp-write-buffer-size: "65536"
+  max-write-queue-size: "1000"
+  batch-window-ms: "5"
+  
+  # Resource monitoring thresholds
+  memory-warning-threshold: "0.8"
+  memory-critical-threshold: "0.9"
+  fd-warning-threshold: "0.8"
+  fd-critical-threshold: "0.9"
+  
+  # Logging configuration
+  log-level: "info"
+  log-format: "json"

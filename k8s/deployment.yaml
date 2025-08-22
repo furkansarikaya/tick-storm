@@ -1,0 +1,229 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tick-storm
+  namespace: tick-storm
+  labels:
+    app: tick-storm
+    version: v1.0.0
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: tick-storm
+  template:
+    metadata:
+      labels:
+        app: tick-storm
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: tick-storm
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+      - name: tick-storm
+        image: tickstorm:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: tcp
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        env:
+        # Server configuration
+        - name: LISTEN_ADDR
+          value: "0.0.0.0:8080"
+        - name: MAX_CONNECTIONS
+          value: "50000"
+        - name: WRITE_DEADLINE_MS
+          value: "5000"
+        - name: HEARTBEAT_TIMEOUT_MS
+          value: "20000"
+        - name: HEARTBEAT_INTERVAL_MS
+          value: "15000"
+        
+        # Performance tuning
+        - name: TCP_READ_BUFFER_SIZE
+          value: "65536"
+        - name: TCP_WRITE_BUFFER_SIZE
+          value: "65536"
+        - name: MAX_WRITE_QUEUE_SIZE
+          value: "1000"
+        - name: BATCH_WINDOW_MS
+          value: "5"
+        
+        # Authentication
+        - name: AUTH_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: tick-storm-auth
+              key: username
+        - name: AUTH_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: tick-storm-auth
+              key: password
+        
+        # Resource constraints (OS-level)
+        - name: ULIMIT_MAX_OPEN_FILES
+          value: "65536"
+        - name: ULIMIT_MAX_MEMORY_SIZE
+          value: "1610612736"  # 1.5GB
+        - name: ULIMIT_MAX_CPU_TIME
+          value: "7200"        # 2 hours
+        - name: ULIMIT_MAX_STACK_SIZE
+          value: "8388608"     # 8MB
+        - name: ULIMIT_MAX_CORE_SIZE
+          value: "0"           # Disable core dumps
+        
+        # Go runtime tuning
+        - name: GOMAXPROCS
+          value: "2"
+        - name: GOGC
+          value: "100"
+        - name: GOMEMLIMIT
+          value: "1400MB"      # Leave headroom for container
+        
+        # Logging
+        - name: LOG_LEVEL
+          value: "info"
+        
+        # Network security
+        - name: IP_ALLOWLIST
+          valueFrom:
+            configMapKeyRef:
+              name: tick-storm-config
+              key: ip-allowlist
+              optional: true
+        - name: IP_BLOCKLIST
+          valueFrom:
+            configMapKeyRef:
+              name: tick-storm-config
+              key: ip-blocklist
+              optional: true
+        
+        # Resource limits and requests
+        resources:
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+            ephemeral-storage: "1Gi"
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+            ephemeral-storage: "500Mi"
+        
+        # Security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          capabilities:
+            drop:
+            - ALL
+        
+        # Health checks
+        livenessProbe:
+          exec:
+            command:
+            - /tick-storm
+            - -health-check
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        
+        readinessProbe:
+          exec:
+            command:
+            - /tick-storm
+            - -health-check
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+        
+        startupProbe:
+          exec:
+            command:
+            - /tick-storm
+            - -health-check
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
+          successThreshold: 1
+        
+        # Volume mounts
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: var-run
+          mountPath: /var/run
+        # Uncomment for TLS certificates
+        # - name: tls-certs
+        #   mountPath: /certs
+        #   readOnly: true
+      
+      # Volumes
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: var-run
+        emptyDir: {}
+      # Uncomment for TLS certificates
+      # - name: tls-certs
+      #   secret:
+      #     secretName: tick-storm-tls
+      #     defaultMode: 0400
+      
+      # Node selection and affinity
+      nodeSelector:
+        kubernetes.io/os: linux
+      
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - tick-storm
+              topologyKey: kubernetes.io/hostname
+      
+      # Tolerations for dedicated nodes (optional)
+      # tolerations:
+      # - key: "tick-storm"
+      #   operator: "Equal"
+      #   value: "true"
+      #   effect: "NoSchedule"
+      
+      # Termination grace period
+      terminationGracePeriodSeconds: 30
+      
+      # DNS policy
+      dnsPolicy: ClusterFirst
+      
+      # Restart policy
+      restartPolicy: Always

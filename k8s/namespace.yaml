@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tick-storm
+  labels:
+    name: tick-storm
+    app: tick-storm
+  annotations:
+    description: "Tick-Storm TCP stream server namespace"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tick-storm-quota
+  namespace: tick-storm
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: 20Gi
+    limits.cpu: "20"
+    limits.memory: 40Gi
+    pods: "10"
+    persistentvolumeclaims: "5"
+    services: "5"
+    secrets: "10"
+    configmaps: "10"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: tick-storm-limits
+  namespace: tick-storm
+spec:
+  limits:
+  - default:
+      cpu: "2000m"
+      memory: "2Gi"
+      ephemeral-storage: "1Gi"
+    defaultRequest:
+      cpu: "500m"
+      memory: "1Gi"
+      ephemeral-storage: "500Mi"
+    max:
+      cpu: "4000m"
+      memory: "4Gi"
+      ephemeral-storage: "2Gi"
+    min:
+      cpu: "100m"
+      memory: "256Mi"
+      ephemeral-storage: "100Mi"
+    type: Container
+  - default:
+      cpu: "4000m"
+      memory: "4Gi"
+      ephemeral-storage: "2Gi"
+    defaultRequest:
+      cpu: "1000m"
+      memory: "2Gi"
+      ephemeral-storage: "1Gi"
+    max:
+      cpu: "8000m"
+      memory: "8Gi"
+      ephemeral-storage: "4Gi"
+    min:
+      cpu: "500m"
+      memory: "1Gi"
+      ephemeral-storage: "500Mi"
+    type: Pod
