@@ -233,6 +233,12 @@ type Server struct {
 	resourceMonitor     *ResourceMonitor
 	resourceConstraints *ResourceConstraints
 	breachHandler       *ResourceBreachHandler
+	
+	// Health checking
+	healthChecker       *HealthChecker
+	instanceID          string
+	logger              *slog.Logger
+	startTime           time.Time
 }
 
 // NewServer creates a new TCP server.
@@ -245,6 +251,9 @@ func NewServer(config *Config) *Server {
 	
 	ctx, cancel := context.WithCancel(context.Background())
 	
+	logger := slog.Default()
+	instanceID := generateInstanceID()
+	
 	s := &Server{
 		config:         config,
 		authenticator:  auth.NewAuthenticator(auth.DefaultConfig()),
@@ -253,10 +262,12 @@ func NewServer(config *Config) *Server {
 		cancel:         cancel,
 		tlsMetrics:     NewTLSMetrics(),
 		ddosProtection: NewDDoSProtection(),
+		instanceID:     instanceID,
+		logger:         logger,
+		startTime:      time.Now(),
 	}
 	
 	// Initialize resource management components
-	logger := slog.Default()
 	limits := ResourceLimits{
 		MaxMemoryMB:       1024,  // 1GB default
 		MaxFileDescriptors: 65536, // 64K file descriptors
@@ -268,6 +279,12 @@ func NewServer(config *Config) *Server {
 	s.resourceMonitor = NewResourceMonitor(limits)
 	s.resourceConstraints = NewResourceConstraints()
 	s.breachHandler = NewResourceBreachHandler(logger, s.resourceMonitor)
+	
+	// Initialize health checker
+	s.healthChecker = NewHealthChecker(s)
+	
+	// Initialize auto-scaling support
+	s.initAutoScaling()
 	
 	return s
 }
@@ -311,6 +328,11 @@ func (s *Server) Start() error {
 		go s.breachHandler.StartMonitoring(s.ctx)
 	}
 	
+	// Start health check server on port 8081
+	if err := s.StartHealthCheckServer(8081); err != nil {
+		s.logger.Error("failed to start health check server", "error", err)
+	}
+	
 	// Start accepting connections
 	s.wg.Add(1)
 	go s.acceptLoop()
@@ -338,6 +360,74 @@ func (s *Server) createListener() (net.Listener, error) {
 	}
 	
 	return listener, nil
+}
+
+// Shutdown gracefully shuts down the server without losing connections.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if !s.closed.CompareAndSwap(false, true) {
+		return ErrServerClosed
+	}
+	
+	s.logger.Info("starting graceful shutdown")
+	
+	// Stop accepting new connections first
+	if s.listener != nil {
+		s.listener.Close()
+		s.logger.Info("stopped accepting new connections")
+	}
+	
+	// Allow existing connections to complete naturally
+	// Wait for connections to finish or timeout
+	shutdownTimeout := 30 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		shutdownTimeout = time.Until(deadline)
+	}
+	
+	s.logger.Info("waiting for connections to complete", "timeout", shutdownTimeout)
+	
+	// Create a timeout context for graceful shutdown
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer shutdownCancel()
+	
+	// Monitor connection count during shutdown
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	
+	for {
+		activeConns := atomic.LoadInt32(&s.activeConns)
+		if activeConns == 0 {
+			s.logger.Info("all connections closed gracefully")
+			break
+		}
+		
+		select {
+		case <-shutdownCtx.Done():
+			s.logger.Warn("shutdown timeout reached, forcing connection closure", 
+				"remaining_connections", activeConns)
+			s.cancel() // Cancel server context to force close remaining connections
+			s.closeAllConnections()
+			goto waitForGoroutines
+		case <-ticker.C:
+			s.logger.Info("waiting for connections to close", "active_connections", activeConns)
+		}
+	}
+	
+waitForGoroutines:
+	// Wait for all goroutines to finish
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	
+	select {
+	case <-done:
+		s.logger.Info("graceful shutdown completed")
+		return nil
+	case <-ctx.Done():
+		s.logger.Error("shutdown context expired")
+		return ctx.Err()
+	}
 }
 
 // Stop gracefully stops the server.
