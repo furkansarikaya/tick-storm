@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"strconv"
 	"sync"
@@ -243,6 +244,9 @@ type Server struct {
 	
 	// Prometheus metrics
 	prometheusMetrics   *PrometheusMetrics
+	
+	// Goroutine pool for connection handling
+	goroutinePool       *GoroutinePool
 }
 
 // NewServer creates a new TCP server.
@@ -289,6 +293,9 @@ func NewServer(config *Config) *Server {
 	
 	// Initialize Prometheus metrics
 	s.prometheusMetrics = NewPrometheusMetrics()
+	
+	// Initialize goroutine pool for optimized connection handling
+	s.goroutinePool = NewGoroutinePool(runtime.NumCPU(), runtime.NumCPU()*4)
 	
 	// Initialize auto-scaling support
 	s.initAutoScaling()
@@ -458,6 +465,11 @@ func (s *Server) Stop(ctx context.Context) error {
 	// Cancel server context
 	s.cancel()
 	
+	// Stop goroutine pool if exists
+	if s.goroutinePool != nil {
+		s.goroutinePool.Stop(5 * time.Second)
+	}
+	
 	// Close all active connections
 	s.closeAllConnections()
 	
@@ -524,15 +536,30 @@ func (s *Server) acceptLoop() {
 			continue
 		}
 		
-		// Handle connection
-		s.wg.Add(1)
-		go s.handleConnection(conn)
+		// Handle connection using goroutine pool if available, otherwise direct goroutine
+		if s.goroutinePool != nil {
+			// Use goroutine pool for better resource management
+			if !s.goroutinePool.Submit(func() {
+				s.handleConnection(conn)
+			}) {
+				// Pool is full, fall back to direct goroutine
+				s.wg.Add(1)
+				go s.handleConnection(conn)
+			}
+		} else {
+			// Direct goroutine-per-connection model
+			s.wg.Add(1)
+			go s.handleConnection(conn)
+		}
 	}
 }
 
 // handleConnection handles a single client connection.
 func (s *Server) handleConnection(netConn net.Conn) {
-	defer s.wg.Done()
+	// Only call Done if we're using direct goroutines (not pool)
+	if s.goroutinePool == nil {
+		defer s.wg.Done()
+	}
 	
 	// Record TLS connection metrics if applicable
 	if tlsConn, ok := netConn.(*tls.Conn); ok {
@@ -634,7 +661,7 @@ func (s *Server) processConnection(conn *Connection) error {
 		case errors.Is(err, auth.ErrRateLimited):
 			_ = conn.SendAuthError()
 			atomic.AddUint64(&s.authRateLimited, 1)
-			s.prometheusMetrics.IncrementAuthRateLimited()
+			s.prometheusMetrics.IncrementAuthRateLimited(s.instanceID)
 		case errors.Is(err, auth.ErrInvalidCredentials):
 			_ = conn.SendAuthError()
 			atomic.AddUint64(&s.authFailures, 1)
