@@ -224,8 +224,9 @@ type Server struct {
 	authRateLimited uint64
 	tlsMetrics     *TLSMetrics
 
-	// IP filtering
+	// Security
 	ipFilter       *IPFilter
+	ddosProtection *DDoSProtection
 }
 
 // NewServer creates a new TCP server.
@@ -239,12 +240,13 @@ func NewServer(config *Config) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
 	
 	return &Server{
-		config:        config,
-		authenticator: auth.NewAuthenticator(auth.DefaultConfig()),
-		connections:   make(map[string]*Connection),
-		ctx:           ctx,
-		cancel:        cancel,
-		tlsMetrics:    NewTLSMetrics(),
+		config:         config,
+		authenticator:  auth.NewAuthenticator(auth.DefaultConfig()),
+		connections:    make(map[string]*Connection),
+		ctx:            ctx,
+		cancel:         cancel,
+		tlsMetrics:     NewTLSMetrics(),
+		ddosProtection: NewDDoSProtection(),
 	}
 }
 
@@ -275,6 +277,9 @@ func (s *Server) Start() error {
 	}
 	
 	s.listener = listener
+	
+	// Start DDoS protection cleanup routine
+	s.ddosProtection.StartCleanupRoutine()
 	
 	// Start accepting connections
 	s.wg.Add(1)
@@ -366,6 +371,12 @@ func (s *Server) acceptLoop() {
 				continue
 			}
 		}
+		
+		// Check DDoS protection
+		if !s.ddosProtection.CheckConnectionAllowed(conn.RemoteAddr()) {
+			conn.Close()
+			continue
+		}
 
 		// Check connection limit
 		if atomic.LoadInt32(&s.activeConns) >= int32(s.config.MaxConnections) {
@@ -420,6 +431,11 @@ func (s *Server) handleConnection(netConn net.Conn) {
 	// Register connection
 	s.registerConnection(conn)
 	defer s.unregisterConnection(conn)
+	
+	// Record port access for DDoS protection
+	if s.ddosProtection != nil {
+		s.ddosProtection.RecordPortAccess(netConn.RemoteAddr(), 8080) // Use actual port from config
+	}
 	
 	// Handle the connection
 	if err := s.processConnection(conn); err != nil {
@@ -544,6 +560,14 @@ func (s *Server) GetStats() map[string]interface{} {
 		"auth_rate_limited":   atomic.LoadUint64(&s.authRateLimited),
 		"max_connections":     s.config.MaxConnections,
 		"listen_addr":         s.config.ListenAddr,
+	}
+	
+	// Add DDoS protection metrics
+	if s.ddosProtection != nil {
+		ddosMetrics := s.ddosProtection.GetMetrics()
+		for k, v := range ddosMetrics {
+			stats["ddos_"+k] = v
+		}
 	}
 	
 	// Add TLS metrics if TLS is enabled

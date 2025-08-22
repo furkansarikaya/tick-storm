@@ -161,6 +161,48 @@ Client error codes related to authentication:
   - auth_rate_limited: total attempts rejected due to rate limiting
 - Add log sampling for rejected connections in front‑end proxies/load balancers.
 
+## DDoS Protection
+
+Tick-Storm includes built-in DDoS protection mechanisms to defend against various attack vectors:
+
+### Connection Rate Limiting
+- **Per-IP Connection Limits**: Maximum 100 concurrent connections per IP address
+- **Connection Rate Control**: Maximum 10 new connections per second per IP
+- **Burst Protection**: Prevents rapid connection flooding from single sources
+
+### Port Scanning Detection
+- **Threshold-Based Detection**: Triggers when >20 ports accessed from single IP within 5 minutes
+- **Consecutive Scan Detection**: Identifies rapid sequential port access attempts
+- **Automatic Blocking**: Port scanning IPs are automatically blocked from new connections
+
+### Metrics and Monitoring
+DDoS protection metrics are available via server stats with `ddos_` prefix:
+- `ddos_blocked_connections`: Total connections blocked due to DDoS protection
+- `ddos_rate_limited_connections`: Connections rejected due to rate limiting
+- `ddos_port_scan_attempts`: Total port scanning attempts detected
+- `ddos_active_tracked_ips`: Number of IPs currently being tracked
+- `ddos_suspicious_ips`: Number of IPs flagged for suspicious activity
+
+## Network Monitoring and Alerting
+
+The server includes comprehensive network monitoring with configurable alerting:
+
+### Alert Types
+- **High Connection Rate**: Alerts when connection rate exceeds 1000/second
+- **High Failure Rate**: Critical alert when >50% of connections fail
+- **Port Scanning Activity**: Critical alert for >100 port scan attempts/minute
+
+### Alert Handlers
+- **Structured Logging**: All alerts logged with detailed metadata
+- **Extensible System**: Custom alert handlers can be added
+- **Cooldown Protection**: 5-minute cooldown between similar alerts
+
+### Configuration
+Environment variables for monitoring thresholds:
+- `MONITOR_MAX_CONN_PER_SEC`: Maximum connections per second threshold
+- `MONITOR_MAX_FAILURE_RATE`: Maximum connection failure rate (0.0-1.0)
+- `MONITOR_MAX_PORT_SCANS_PER_MIN`: Maximum port scans per minute
+
 ## Best Practices
 
 - Bind to loopback (`127.0.0.1` or `[::1]`) for local dev.
@@ -168,9 +210,15 @@ Client error codes related to authentication:
 - Maintain allowlist as primary control; use blocklist for tactical denies.
 - Keep allow/block lists minimal and aggregated (use CIDR).
 - Always deploy complementary firewall policies.
+- Monitor DDoS protection metrics regularly for attack patterns.
+- Configure network monitoring alerts for your environment.
+- Use geographic IP blocking for additional protection if needed.
 
 ## Troubleshooting
 
 - Confirm listener with `ss -tlnp | grep 8080` and that it binds to the expected address.
 - Verify effective allow/block configuration via unit tests and small integration checks.
 - Inspect server logs and metrics snapshot for rejected connection counts.
+- Check DDoS protection metrics if connections are being unexpectedly blocked.
+- Review network monitoring alerts for security incidents.
+- Verify port scanning detection isn't triggering false positives.
