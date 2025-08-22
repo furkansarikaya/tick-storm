@@ -356,3 +356,88 @@ func TestCreateErrorResponse(t *testing.T) {
 		t.Errorf("Expected error message %q, got %q", "test error", errorResp.Message)
 	}
 }
+
+func TestAuthenticatorRateLimitingPerIPIgnoresPort(t *testing.T) {
+    // Configure credentials (we will send wrong creds to avoid limiter reset)
+    os.Setenv("STREAM_USER", "gooduser")
+    os.Setenv("STREAM_PASS", "goodpass")
+    os.Setenv("AUTH_MAX_ATTEMPTS", "1")
+    os.Setenv("AUTH_RATE_LIMIT_WINDOW", "50ms")
+    defer os.Unsetenv("STREAM_USER")
+    defer os.Unsetenv("STREAM_PASS")
+    defer os.Unsetenv("AUTH_MAX_ATTEMPTS")
+    defer os.Unsetenv("AUTH_RATE_LIMIT_WINDOW")
+
+    cfg := DefaultConfig()
+    a := NewAuthenticator(cfg)
+    ctx := context.Background()
+
+    // Build an AUTH frame with invalid credentials
+    badReq := &pb.AuthRequest{Username: "wrong", Password: "wrong", ClientId: "c1", Version: "1.0.0"}
+    badPayload, _ := proto.Marshal(badReq)
+    frame := &protocol.Frame{Type: protocol.MessageTypeAuth, Payload: badPayload}
+
+    // First attempt from IP 10.0.0.1 (port 10000) should be allowed by limiter,
+    // but fail with invalid credentials.
+    if _, err := a.Authenticate(ctx, "10.0.0.1:10000", frame); err != ErrInvalidCredentials {
+        t.Fatalf("expected ErrInvalidCredentials on first attempt, got %v", err)
+    }
+
+    // Second attempt from same IP but different port should be rate limited.
+    if _, err := a.Authenticate(ctx, "10.0.0.1:20000", frame); err != ErrRateLimited {
+        t.Fatalf("expected ErrRateLimited on second attempt (same IP, different port), got %v", err)
+    }
+
+    // Attempt from a different IP should not be affected by the limiter state of 10.0.0.1.
+    if _, err := a.Authenticate(ctx, "10.0.0.2:30000", frame); err != ErrInvalidCredentials {
+        t.Fatalf("expected ErrInvalidCredentials for different IP, got %v", err)
+    }
+}
+
+func TestAuthenticatorEnvOverridesAffectRateLimiter(t *testing.T) {
+    os.Setenv("STREAM_USER", "gooduser")
+    os.Setenv("STREAM_PASS", "goodpass")
+    os.Setenv("AUTH_MAX_ATTEMPTS", "2")
+    os.Setenv("AUTH_RATE_LIMIT_WINDOW", "100ms")
+    defer os.Unsetenv("STREAM_USER")
+    defer os.Unsetenv("STREAM_PASS")
+    defer os.Unsetenv("AUTH_MAX_ATTEMPTS")
+    defer os.Unsetenv("AUTH_RATE_LIMIT_WINDOW")
+
+    cfg := DefaultConfig()
+    if cfg.MaxAttempts != 2 {
+        t.Fatalf("expected MaxAttempts from env to be 2, got %d", cfg.MaxAttempts)
+    }
+    if cfg.RateLimitWindow != 100*time.Millisecond {
+        t.Fatalf("expected RateLimitWindow from env to be 100ms, got %v", cfg.RateLimitWindow)
+    }
+
+    a := NewAuthenticator(cfg)
+    ctx := context.Background()
+
+    // Build an AUTH frame with invalid credentials
+    badReq := &pb.AuthRequest{Username: "wrong", Password: "wrong", ClientId: "c2", Version: "1.0.0"}
+    badPayload, _ := proto.Marshal(badReq)
+    frame := &protocol.Frame{Type: protocol.MessageTypeAuth, Payload: badPayload}
+
+    // Two attempts within window should be allowed by limiter (then invalid creds error)
+    if _, err := a.Authenticate(ctx, "192.168.100.1:1111", frame); err != ErrInvalidCredentials {
+        t.Fatalf("first attempt expected ErrInvalidCredentials, got %v", err)
+    }
+    if _, err := a.Authenticate(ctx, "192.168.100.1:2222", frame); err != ErrInvalidCredentials {
+        t.Fatalf("second attempt expected ErrInvalidCredentials, got %v", err)
+    }
+
+    // Next attempt should be rate limited (blocked)
+    if _, err := a.Authenticate(ctx, "192.168.100.1:3333", frame); err != ErrRateLimited {
+        t.Fatalf("third attempt expected ErrRateLimited, got %v", err)
+    }
+
+    // Block period is window*3 due to RecordFailure penalty; wait a bit longer
+    time.Sleep(350 * time.Millisecond)
+
+    // After block period, attempts should be allowed again by limiter
+    if _, err := a.Authenticate(ctx, "192.168.100.1:4444", frame); err != ErrInvalidCredentials {
+        t.Fatalf("post-block attempt expected ErrInvalidCredentials, got %v", err)
+    }
+}

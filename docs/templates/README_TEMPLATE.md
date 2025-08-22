@@ -24,6 +24,7 @@
 - **Client Certificate Validation**: mTLS authentication support
 - **Rate Limiting**: 10 authentication attempts per minute per IP
 - **Input Validation**: Comprehensive frame and message validation
+- **IP Allow/Block Lists**: Server-side filtering with allowlist/blocklist and IPv4/IPv6 CIDR support
 
 ### Performance & Scale
 - **Sub-millisecond Latency**: p50 < 1ms, p95 < 5ms response times
@@ -71,6 +72,8 @@ docker-compose up -d
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LISTEN_ADDR` | `0.0.0.0:8080` | Server listen address |
+| `LISTEN_HOST` | `` | Listen host only (used with LISTEN_PORT). Ignored if LISTEN_ADDR is set |
+| `LISTEN_PORT` | `8080` | Listen port only (used with LISTEN_HOST). Ignored if LISTEN_ADDR is set |
 | `MAX_CONNECTIONS` | `100000` | Maximum concurrent connections |
 | `WRITE_DEADLINE_MS` | `5000` | Write timeout in milliseconds |
 | `HEARTBEAT_TIMEOUT_MS` | `20000` | Client heartbeat timeout |
@@ -97,6 +100,12 @@ docker-compose up -d
 | `TCP_WRITE_BUFFER_SIZE` | `65536` | TCP write buffer size |
 | `MAX_WRITE_QUEUE_SIZE` | `1000` | Maximum write queue size |
 | `BATCH_WINDOW_MS` | `5` | Micro-batching window |
+
+#### Network Security
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `IP_ALLOWLIST` | `` | Comma-separated IPs/CIDRs to allow (e.g., `10.0.0.0/8,192.168.0.0/16,203.0.113.10`) |
+| `IP_BLOCKLIST` | `` | Comma-separated IPs/CIDRs to block (e.g., `198.51.100.0/24,203.0.113.200`) |
 
 ## 🐳 Docker Deployment
 
@@ -141,6 +150,11 @@ services:
       - AUTH_USERNAME=admin
       - AUTH_PASSWORD=secure_password
       - MAX_CONNECTIONS=50000
+      # Network security (optional)
+      # - LISTEN_HOST=127.0.0.1        # Alternative to LISTEN_ADDR
+      # - LISTEN_PORT=8080             # Alternative to LISTEN_ADDR
+      # - IP_ALLOWLIST=10.0.0.0/8,192.168.0.0/16,203.0.113.10
+      # - IP_BLOCKLIST=198.51.100.0/24,203.0.113.200
     restart: unless-stopped
     healthcheck:
       test: ["/tickstorm", "-health-check"]
@@ -280,6 +294,7 @@ go build -o test-client ./cmd/test-client
 - [Architecture Design](docs/ARCHITECTURE.md)
 - [Protocol Specification](docs/PROTOCOL.md)
 - [Version Migration Guide](docs/VERSION_MIGRATION.md)
+- [Network Security Guide](docs/NETWORK_SECURITY.md)
 - [Brand Guidelines](docs/BRAND_GUIDELINES.md)
 - [Contributing Guide](CONTRIBUTING.md)
 

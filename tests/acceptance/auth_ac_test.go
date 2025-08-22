@@ -77,12 +77,12 @@ func TestAC1_AuthMustBeFirstFrame(t *testing.T) {
 	require.NoError(t, err)
 	writeFrame(t, conn, frame)
 
-	// Expect ERROR with INVALID_AUTH
+	// Expect ERROR with AUTH_REQUIRED
 	resp := readFrame(t, conn)
 	require.Equal(t, protocol.MessageTypeError, resp.Type)
 	var errResp pb.ErrorResponse
 	require.NoError(t, protocol.UnmarshalMessage(resp, &errResp))
-	require.Equal(t, pb.ErrorCode_ERROR_CODE_INVALID_AUTH, errResp.Code)
+	require.Equal(t, pb.ErrorCode_ERROR_CODE_AUTH_REQUIRED, errResp.Code)
 }
 
 // AC-1: Invalid credentials must be rejected with an error.
@@ -137,4 +137,52 @@ func TestAC1_ValidCredentialsAccepted(t *testing.T) {
 	require.NoError(t, protocol.UnmarshalMessage(resp, &ack))
 	require.True(t, ack.Success)
 	require.Equal(t, pb.MessageType_MESSAGE_TYPE_AUTH, ack.AckType)
+}
+
+// AC-1: Duplicate AUTH on the same connection should return ALREADY_AUTHENTICATED
+func TestAC1_DuplicateAuthOnSameConnection(t *testing.T) {
+    setCreds(t, "dup_user", "dup_pass")
+    s, addr := startTestServer(t)
+    defer func() { _ = s.Stop(context.Background()) }()
+
+    conn := dial(t, addr)
+    defer conn.Close()
+
+    // First AUTH with valid credentials -> expect ACK
+    authReq := &pb.AuthRequest{
+        Username: "dup_user",
+        Password: "dup_pass",
+        ClientId: "ac-dup-client",
+        Version:  "1.0.0",
+    }
+    frame1, err := protocol.MarshalMessage(protocol.MessageTypeAuth, authReq)
+    require.NoError(t, err)
+    writeFrame(t, conn, frame1)
+
+    resp1 := readFrame(t, conn)
+    require.Equal(t, protocol.MessageTypeACK, resp1.Type)
+    var ack pb.AckResponse
+    require.NoError(t, protocol.UnmarshalMessage(resp1, &ack))
+    require.True(t, ack.Success)
+    require.Equal(t, pb.MessageType_MESSAGE_TYPE_AUTH, ack.AckType)
+
+    // Capture auth_failures before second AUTH
+    statsBefore := s.GetStats()
+    prevFailures, _ := statsBefore["auth_failures"].(uint64)
+
+    // Second AUTH on the same connection -> expect ERROR ALREADY_AUTHENTICATED
+    frame2, err := protocol.MarshalMessage(protocol.MessageTypeAuth, authReq)
+    require.NoError(t, err)
+    writeFrame(t, conn, frame2)
+
+    resp2 := readFrame(t, conn)
+    require.Equal(t, protocol.MessageTypeError, resp2.Type)
+    var errResp pb.ErrorResponse
+    require.NoError(t, protocol.UnmarshalMessage(resp2, &errResp))
+    require.Equal(t, pb.ErrorCode_ERROR_CODE_ALREADY_AUTHENTICATED, errResp.Code)
+
+    // Allow small time for metrics to update and assert increment
+    time.Sleep(10 * time.Millisecond)
+    statsAfter := s.GetStats()
+    require.EqualValues(t, prevFailures+1, statsAfter["auth_failures"])
 }

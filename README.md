@@ -110,6 +110,23 @@ TLS_CLIENT_AUTH=require_verify    # Client certificate mode
 TLS_CA_FILE=/path/to/ca.pem       # CA certificate for client validation
 ```
 
+### Network Security
+```bash
+# Listener binding (precedence: LISTEN_ADDR > LISTEN_HOST+LISTEN_PORT > LISTEN_PORT)
+LISTEN_ADDR=0.0.0.0:8080          # Full address (host:port) to bind
+LISTEN_HOST=127.0.0.1             # Host/interface to bind (optional)
+LISTEN_PORT=8080                  # Port (optional)
+
+# IP allow/block lists (comma-separated, supports IP or CIDR)
+IP_ALLOWLIST=10.0.0.0/8,192.168.0.0/16,203.0.113.10
+IP_BLOCKLIST=198.51.100.0/24,203.0.113.200
+```
+
+Notes:
+- Blocklist takes precedence over allowlist.
+- If allowlist is empty, all IPs are allowed except those in the blocklist.
+- IPv4 and IPv6 are supported.
+
 ## 🚀 Quick Start
 
 ### Basic Server
@@ -254,6 +271,7 @@ TickStorm supports enterprise-grade TLS security:
 - [Architecture Overview](docs/ARCHITECTURE.md)
 - [Protocol Specification](docs/PROTOCOL.md)
 - [Version Migration Guide](docs/VERSION_MIGRATION.md)
+- [Network Security Guide](docs/NETWORK_SECURITY.md)
 - [Deployment Guide](docs/DEPLOYMENT.md)
 
 ## 🤝 Contributing

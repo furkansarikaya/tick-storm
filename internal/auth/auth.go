@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -45,13 +47,27 @@ type Config struct {
 
 // DefaultConfig returns default authentication configuration.
 func DefaultConfig() *Config {
-	return &Config{
+	cfg := &Config{
 		Username:        os.Getenv("STREAM_USER"),
 		Password:        os.Getenv("STREAM_PASS"),
 		Timeout:         30 * time.Second,
 		MaxAttempts:     3,
 		RateLimitWindow: 1 * time.Minute,
 	}
+
+	// Optional overrides
+	if v := os.Getenv("AUTH_MAX_ATTEMPTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.MaxAttempts = n
+		}
+	}
+	if v := os.Getenv("AUTH_RATE_LIMIT_WINDOW"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.RateLimitWindow = d
+		}
+	}
+
+	return cfg
 }
 
 // Authenticator handles authentication for connections.
@@ -94,8 +110,14 @@ func (a *Authenticator) ValidateFirstFrame(frame *protocol.Frame) error {
 
 // Authenticate processes an authentication request.
 func (a *Authenticator) Authenticate(ctx context.Context, clientAddr string, frame *protocol.Frame) (*Session, error) {
-	// Check rate limiting
-	if !a.rateLimiter.Allow(clientAddr) {
+	// Derive per-IP key for rate limiting (strip port from remote address)
+	ipKey := clientAddr
+	if host, _, err := net.SplitHostPort(clientAddr); err == nil {
+		ipKey = host
+	}
+
+	// Check rate limiting per IP
+	if !a.rateLimiter.Allow(ipKey) {
 		return nil, ErrRateLimited
 	}
 	
@@ -115,7 +137,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, clientAddr string, fra
 	
 	// Validate credentials
 	if authReq.Username != a.config.Username || authReq.Password != a.config.Password {
-		a.rateLimiter.RecordFailure(clientAddr)
+		a.rateLimiter.RecordFailure(ipKey)
 		return nil, ErrInvalidCredentials
 	}
 	
@@ -133,8 +155,8 @@ func (a *Authenticator) Authenticate(ctx context.Context, clientAddr string, fra
 	a.sessions[clientAddr] = session
 	a.mu.Unlock()
 	
-	// Reset rate limiter on successful auth
-	a.rateLimiter.Reset(clientAddr)
+	// Reset rate limiter on successful auth (per IP)
+	a.rateLimiter.Reset(ipKey)
 	
 	return session, nil
 }

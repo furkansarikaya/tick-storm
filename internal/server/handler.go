@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -34,10 +35,12 @@ type ConnectionHandler struct {
 	batchTimer     *time.Timer
 	logger         *slog.Logger
 	subscriptionTimer *time.Timer  // Timer for subscription timeout
+	server         *Server
 }
 
 // NewConnectionHandler creates a new connection handler.
-func NewConnectionHandler(conn *Connection, config *Config) *ConnectionHandler {
+// Optionally accepts a Server pointer to enable metric updates.
+func NewConnectionHandler(conn *Connection, config *Config, srv ...*Server) *ConnectionHandler {
 	logger := slog.Default().With(
 		"connection_id", conn.ID(),
 		"remote_addr", conn.RemoteAddr(),
@@ -54,7 +57,13 @@ func NewConnectionHandler(conn *Connection, config *Config) *ConnectionHandler {
 		batchTimer:     time.NewTimer(5 * time.Millisecond),
 		pendingBatch:   make([]*pb.Tick, 0, 100),
 		logger:         logger,
+		authenticated:  conn.IsAuthenticated(),
 		lastHeartbeat:  time.Now(), // Initialize to current time
+		server:         nil,
+	}
+	
+	if len(srv) > 0 && srv[0] != nil {
+		handler.server = srv[0]
 	}
 	
 	// Initialize heartbeat timer - client must send heartbeat within timeout period
@@ -140,21 +149,37 @@ func (h *ConnectionHandler) Handle(ctx context.Context) error {
 				return err
 			}
 			
-			// First frame must be auth
-			if !h.authenticated && frame.Type != protocol.MessageTypeAuth {
-				if sendErr := h.conn.SendError(pb.ErrorCode_ERROR_CODE_INVALID_MESSAGE, "first frame must be auth"); sendErr != nil {
-					return sendErr
-				}
-				return fmt.Errorf("first frame must be auth")
-			}
-			
-			// Process the frame
-			if err := h.processFrame(ctx, frame); err != nil {
-				if sendErr := h.conn.SendError(pb.ErrorCode_ERROR_CODE_INVALID_MESSAGE, err.Error()); sendErr != nil {
-					return sendErr
-				}
-				return err
-			}
+			// First frame must be auth when not yet authenticated
+            if !h.authenticated && frame.Type != protocol.MessageTypeAuth {
+                if sendErr := h.conn.SendError(pb.ErrorCode_ERROR_CODE_AUTH_REQUIRED, "first frame must be auth"); sendErr != nil {
+                    return sendErr
+                }
+                return fmt.Errorf("first frame must be auth")
+            }
+            
+            // Process the frame
+            if err := h.processFrame(ctx, frame); err != nil {
+                // Map protocol errors to specific error codes for client clarity
+                if errors.Is(err, protocol.ErrInvalidSequence) && frame.Type == protocol.MessageTypeAuth {
+                    // Duplicate AUTH attempt
+                    code := pb.ErrorCode_ERROR_CODE_ALREADY_AUTHENTICATED
+                    if !h.authenticated {
+                        code = pb.ErrorCode_ERROR_CODE_AUTH_REQUIRED
+                    }
+                    if sendErr := h.conn.SendErrorCode(code); sendErr != nil {
+                        return sendErr
+                    }
+                    // Increment server auth failures for duplicate AUTH on authenticated connection
+                    if h.authenticated && h.server != nil {
+                        atomic.AddUint64(&h.server.authFailures, 1)
+                    }
+                } else {
+                    if sendErr := h.conn.SendError(pb.ErrorCode_ERROR_CODE_INVALID_MESSAGE, err.Error()); sendErr != nil {
+                        return sendErr
+                    }
+                }
+                return err
+            }
 		}
 	}
 }

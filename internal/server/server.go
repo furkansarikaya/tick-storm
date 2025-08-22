@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,10 @@ type Config struct {
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
 	KeepAlive       time.Duration
+	
+	// Network security
+	AllowCIDRs      []string
+	BlockCIDRs      []string
 	
 	// TLS settings
 	TLS             *TLSConfig
@@ -86,6 +91,24 @@ func LoadConfigFromEnv(cfg *Config) {
 	if port := os.Getenv("LISTEN_PORT"); port != "" {
 		cfg.ListenAddr = ":" + port
 	}
+
+	// LISTEN_ADDR takes precedence if provided (e.g., "127.0.0.1:8080" or "[::1]:8080")
+	if addr := os.Getenv("LISTEN_ADDR"); addr != "" {
+		cfg.ListenAddr = addr
+	} else if host := os.Getenv("LISTEN_HOST"); host != "" { // combine host + port
+		port := os.Getenv("LISTEN_PORT")
+		if port == "" {
+			// try to derive from current ListenAddr, else default 8080
+			if _, p, err := net.SplitHostPort(cfg.ListenAddr); err == nil && p != "" {
+				port = p
+			} else if strings.HasPrefix(cfg.ListenAddr, ":") && len(cfg.ListenAddr) > 1 {
+				port = cfg.ListenAddr[1:]
+			} else {
+				port = "8080"
+			}
+		}
+		cfg.ListenAddr = net.JoinHostPort(host, port)
+	}
 	
 	// Load TLS configuration from environment
 	if cfg.TLS != nil {
@@ -97,16 +120,37 @@ func LoadConfigFromEnv(cfg *Config) {
 			cfg.HeartbeatInterval = d
 		}
 	}
+
+	// Backward compatibility (ms variant takes precedence if set)
+	if intervalMS := os.Getenv("HEARTBEAT_INTERVAL_MS"); intervalMS != "" {
+		if ms, err := strconv.Atoi(intervalMS); err == nil {
+			cfg.HeartbeatInterval = time.Duration(ms) * time.Millisecond
+		}
+	}
 	
 	if timeout := os.Getenv("HEARTBEAT_TIMEOUT"); timeout != "" {
 		if d, err := time.ParseDuration(timeout); err == nil {
 			cfg.HeartbeatTimeout = d
 		}
 	}
+
+	// Backward compatibility (ms variant takes precedence if set)
+	if timeoutMS := os.Getenv("HEARTBEAT_TIMEOUT_MS"); timeoutMS != "" {
+		if ms, err := strconv.Atoi(timeoutMS); err == nil {
+			cfg.HeartbeatTimeout = time.Duration(ms) * time.Millisecond
+		}
+	}
 	
 	if batchWindow := os.Getenv("BATCH_WINDOW"); batchWindow != "" {
 		if d, err := time.ParseDuration(batchWindow); err == nil {
 			cfg.BatchWindow = d
+		}
+	}
+
+	// Backward compatibility (ms variant takes precedence if set)
+	if batchWindowMS := os.Getenv("BATCH_WINDOW_MS"); batchWindowMS != "" {
+		if ms, err := strconv.Atoi(batchWindowMS); err == nil {
+			cfg.BatchWindow = time.Duration(ms) * time.Millisecond
 		}
 	}
 	
@@ -146,6 +190,14 @@ func LoadConfigFromEnv(cfg *Config) {
 			cfg.WriteTimeout = d
 		}
 	}
+
+	// IP allow/block lists (comma-separated CIDRs or IPs)
+	if v := os.Getenv("IP_ALLOWLIST"); v != "" {
+		cfg.AllowCIDRs = splitAndTrimCSV(v)
+	}
+	if v := os.Getenv("IP_BLOCKLIST"); v != "" {
+		cfg.BlockCIDRs = splitAndTrimCSV(v)
+	}
 }
 
 // Server represents the TCP server.
@@ -169,7 +221,11 @@ type Server struct {
 	totalConns     uint64
 	authSuccess    uint64
 	authFailures   uint64
+	authRateLimited uint64
 	tlsMetrics     *TLSMetrics
+
+	// IP filtering
+	ipFilter       *IPFilter
 }
 
 // NewServer creates a new TCP server.
@@ -203,6 +259,13 @@ func (s *Server) Start() error {
 		if err := s.config.TLS.ValidateTLSConfig(); err != nil {
 			return fmt.Errorf("TLS configuration validation failed: %w", err)
 		}
+	}
+	
+	// Build IP filter (no-op if no lists provided)
+	if ipf, err := NewIPFilterFromStrings(s.config.AllowCIDRs, s.config.BlockCIDRs); err != nil {
+		return fmt.Errorf("invalid IP filter configuration: %w", err)
+	} else {
+		s.ipFilter = ipf
 	}
 	
 	// Create listener with TLS support if enabled
@@ -294,6 +357,16 @@ func (s *Server) acceptLoop() {
 			return
 		}
 		
+		// Enforce IP filtering if configured
+		if s.ipFilter != nil {
+			host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
+			if ip := net.ParseIP(host); !s.ipFilter.Allow(ip) {
+				GlobalMetrics.IncrementIPRejectedConnections()
+				conn.Close()
+				continue
+			}
+		}
+
 		// Check connection limit
 		if atomic.LoadInt32(&s.activeConns) >= int32(s.config.MaxConnections) {
 			conn.Close()
@@ -385,7 +458,8 @@ func (s *Server) processConnection(conn *Connection) error {
 	
 	// Validate first frame is AUTH
 	if err := s.authenticator.ValidateFirstFrame(frame); err != nil {
-		conn.SendAuthError()
+		// First message must be AUTH
+		_ = conn.SendErrorCode(pb.ErrorCode_ERROR_CODE_AUTH_REQUIRED)
 		atomic.AddUint64(&s.authFailures, 1)
 		return err
 	}
@@ -393,8 +467,21 @@ func (s *Server) processConnection(conn *Connection) error {
 	// Authenticate
 	session, err := s.authenticator.Authenticate(ctx, conn.RemoteAddr(), frame)
 	if err != nil {
-		conn.SendAuthError()
-		atomic.AddUint64(&s.authFailures, 1)
+		// Send specific error codes for better observability
+		switch {
+		case errors.Is(err, auth.ErrRateLimited):
+			_ = conn.SendErrorCode(pb.ErrorCode_ERROR_CODE_RATE_LIMITED)
+			atomic.AddUint64(&s.authRateLimited, 1)
+		case errors.Is(err, auth.ErrInvalidCredentials):
+			_ = conn.SendErrorCode(pb.ErrorCode_ERROR_CODE_INVALID_AUTH)
+			atomic.AddUint64(&s.authFailures, 1)
+		case errors.Is(err, auth.ErrAlreadyAuthenticated):
+			_ = conn.SendErrorCode(pb.ErrorCode_ERROR_CODE_ALREADY_AUTHENTICATED)
+			atomic.AddUint64(&s.authFailures, 1)
+		default:
+			_ = conn.SendAuthError()
+			atomic.AddUint64(&s.authFailures, 1)
+		}
 		return err
 	}
 	
@@ -409,7 +496,7 @@ func (s *Server) processConnection(conn *Connection) error {
 	conn.SetReadDeadline(time.Time{})
 	
 	// Start connection handler
-	handler := NewConnectionHandler(conn, s.config)
+	handler := NewConnectionHandler(conn, s.config, s)
 	return handler.Handle(ctx)
 }
 
@@ -454,6 +541,7 @@ func (s *Server) GetStats() map[string]interface{} {
 		"total_connections":   atomic.LoadUint64(&s.totalConns),
 		"auth_success":        atomic.LoadUint64(&s.authSuccess),
 		"auth_failures":       atomic.LoadUint64(&s.authFailures),
+		"auth_rate_limited":   atomic.LoadUint64(&s.authRateLimited),
 		"max_connections":     s.config.MaxConnections,
 		"listen_addr":         s.config.ListenAddr,
 	}

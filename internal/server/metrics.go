@@ -11,6 +11,7 @@ type PerformanceMetrics struct {
 	// Connection metrics
 	ActiveConnections     int64
 	TotalConnections      int64
+	IPRejectedConnections int64
 	SlowClientsDetected   int64
 	WriteQueueFullErrors  int64
 	
@@ -62,6 +63,11 @@ func (m *PerformanceMetrics) IncrementSlowClients() {
 // IncrementWriteQueueFull increments write queue full error count
 func (m *PerformanceMetrics) IncrementWriteQueueFull() {
 	atomic.AddInt64(&m.WriteQueueFullErrors, 1)
+}
+
+// IncrementIPRejectedConnections increments rejected connections due to IP filtering
+func (m *PerformanceMetrics) IncrementIPRejectedConnections() {
+	atomic.AddInt64(&m.IPRejectedConnections, 1)
 }
 
 // AddMessagesSent adds to messages sent count
@@ -145,6 +151,7 @@ func (m *PerformanceMetrics) GetSnapshot() map[string]interface{} {
 	return map[string]interface{}{
 		"active_connections":        atomic.LoadInt64(&m.ActiveConnections),
 		"total_connections":         atomic.LoadInt64(&m.TotalConnections),
+		"ip_rejected_connections":   atomic.LoadInt64(&m.IPRejectedConnections),
 		"slow_clients_detected":     atomic.LoadInt64(&m.SlowClientsDetected),
 		"write_queue_full_errors":   atomic.LoadInt64(&m.WriteQueueFullErrors),
 		"messages_sent_total":       atomic.LoadInt64(&m.MessagesSentTotal),
@@ -169,6 +176,7 @@ func (m *PerformanceMetrics) GetSnapshot() map[string]interface{} {
 func (m *PerformanceMetrics) Reset() {
 	atomic.StoreInt64(&m.ActiveConnections, 0)
 	atomic.StoreInt64(&m.TotalConnections, 0)
+	atomic.StoreInt64(&m.IPRejectedConnections, 0)
 	atomic.StoreInt64(&m.SlowClientsDetected, 0)
 	atomic.StoreInt64(&m.WriteQueueFullErrors, 0)
 	atomic.StoreInt64(&m.MessagesSentTotal, 0)
