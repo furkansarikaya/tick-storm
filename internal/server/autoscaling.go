@@ -2,7 +2,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +9,11 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+)
+
+const (
+	contentTypeJSON = "application/json"
+	contentTypeText = "text/plain"
 )
 
 // AutoScalingConfig contains configuration for auto-scaling integration
@@ -92,20 +96,19 @@ func (s *Server) startAutoScalingMetricsServer(port int) {
 
 // handlePrometheusMetrics serves Prometheus-compatible metrics
 func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", contentTypeJSON)
 	
-	stats := s.GetStats()
 	instanceMetrics := s.GetInstanceMetrics()
 	
 	fmt.Fprintf(w, "# HELP tick_storm_active_connections Current number of active connections\n")
 	fmt.Fprintf(w, "# TYPE tick_storm_active_connections gauge\n")
 	fmt.Fprintf(w, "tick_storm_active_connections{instance_id=\"%s\"} %d\n", 
-		s.instanceID, stats.ActiveConnections)
+		s.instanceID, atomic.LoadInt32(&s.activeConns))
 	
 	fmt.Fprintf(w, "# HELP tick_storm_total_connections Total number of connections handled\n")
 	fmt.Fprintf(w, "# TYPE tick_storm_total_connections counter\n")
 	fmt.Fprintf(w, "tick_storm_total_connections{instance_id=\"%s\"} %d\n", 
-		s.instanceID, stats.TotalConnections)
+		s.instanceID, atomic.LoadUint64(&s.totalConns))
 	
 	fmt.Fprintf(w, "# HELP tick_storm_memory_usage_bytes Memory usage in bytes\n")
 	fmt.Fprintf(w, "# TYPE tick_storm_memory_usage_bytes gauge\n")
@@ -125,7 +128,7 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 
 // handleAutoScalingMetrics serves custom metrics for HPA
 func (s *Server) handleAutoScalingMetrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentTypeJSON)
 	
 	metrics := s.calculateAutoScalingMetrics()
 	
@@ -137,7 +140,7 @@ func (s *Server) handleAutoScalingMetrics(w http.ResponseWriter, r *http.Request
 
 // handleScaleRecommendations provides scaling recommendations
 func (s *Server) handleScaleRecommendations(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentTypeJSON)
 	
 	config := s.getAutoScalingConfig()
 	metrics := s.calculateAutoScalingMetrics()
@@ -152,24 +155,24 @@ func (s *Server) handleScaleRecommendations(w http.ResponseWriter, r *http.Reque
 
 // calculateAutoScalingMetrics calculates current metrics for auto-scaling
 func (s *Server) calculateAutoScalingMetrics() AutoScalingMetrics {
-	stats := s.GetStats()
-	instanceMetrics := s.GetInstanceMetrics()
 	config := s.getAutoScalingConfig()
-	
-	// Calculate utilization percentages
-	connectionUtil := float64(stats.ActiveConnections) / float64(config.ConnectionsPerInstance)
+	activeConns := atomic.LoadInt32(&s.activeConns)
+	maxConns := config.ConnectionsPerInstance
+	connectionUtilization := float64(activeConns) / float64(maxConns)
+
+	instanceMetrics := s.GetInstanceMetrics()
 	memoryUtil := float64(instanceMetrics["memory_alloc_mb"].(uint64)) / 1024.0 // Assume 1GB limit
-	
+
 	// Calculate request rate (connections per second over last minute)
 	requestRate := s.calculateRequestRate()
-	
+
 	// Calculate error rate
-	errorRate := s.calculateErrorRate(stats)
+	errorRate := s.calculateErrorRate()
 	
 	return AutoScalingMetrics{
 		InstanceID:            s.instanceID,
-		ActiveConnections:     stats.ActiveConnections,
-		ConnectionUtilization: connectionUtil,
+		ActiveConnections:     activeConns,
+		ConnectionUtilization: connectionUtilization,
 		CPUUtilization:       0.0, // Would need OS-level monitoring
 		MemoryUtilization:    memoryUtil,
 		RequestRate:          requestRate,
@@ -228,23 +231,23 @@ func (s *Server) calculateTargetReplicas(metrics AutoScalingMetrics, config Auto
 func (s *Server) calculateRequestRate() float64 {
 	// This would need historical data tracking
 	// For now, return a placeholder based on current connections
-	stats := s.GetStats()
-	return float64(stats.TotalConnections) / time.Since(s.startTime).Seconds()
+	totalConns := atomic.LoadUint64(&s.totalConns)
+	return float64(totalConns) / time.Since(s.startTime).Seconds()
 }
 
-// calculateErrorRate calculates recent error rate
-func (s *Server) calculateErrorRate(stats ServerStats) float64 {
-	totalAuth := stats.AuthSuccess + stats.AuthFailures + stats.AuthRateLimited
+// calculateErrorRate calculates the current error rate
+func (s *Server) calculateErrorRate() float64 {
+	totalAuth := atomic.LoadUint64(&s.authSuccess) + atomic.LoadUint64(&s.authFailures) + atomic.LoadUint64(&s.authRateLimited)
 	if totalAuth == 0 {
 		return 0.0
 	}
 	
-	errors := stats.AuthFailures + stats.AuthRateLimited
+	errors := atomic.LoadUint64(&s.authFailures) + atomic.LoadUint64(&s.authRateLimited)
 	return float64(errors) / float64(totalAuth)
 }
 
 // GetAutoScalingStatus returns current auto-scaling status
-func (s *Server) GetAutoScalingStatus() map[string]interface{} {
+func (s *Server) getServerStats() map[string]interface{} {
 	config := s.getAutoScalingConfig()
 	metrics := s.calculateAutoScalingMetrics()
 	recommendation := s.calculateScaleRecommendation(config, metrics)

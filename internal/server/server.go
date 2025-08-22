@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"strconv"
@@ -239,6 +240,9 @@ type Server struct {
 	instanceID          string
 	logger              *slog.Logger
 	startTime           time.Time
+	
+	// Prometheus metrics
+	prometheusMetrics   *PrometheusMetrics
 }
 
 // NewServer creates a new TCP server.
@@ -282,6 +286,9 @@ func NewServer(config *Config) *Server {
 	
 	// Initialize health checker
 	s.healthChecker = NewHealthChecker(s)
+	
+	// Initialize Prometheus metrics
+	s.prometheusMetrics = NewPrometheusMetrics()
 	
 	// Initialize auto-scaling support
 	s.initAutoScaling()
@@ -332,6 +339,13 @@ func (s *Server) Start() error {
 	if err := s.StartHealthCheckServer(8081); err != nil {
 		s.logger.Error("failed to start health check server", "error", err)
 	}
+	
+	// Start Prometheus metrics server on port 9090
+	go func() {
+		if err := s.prometheusMetrics.StartMetricsServer(9090); err != nil && err != http.ErrServerClosed {
+			s.logger.Error("failed to start Prometheus metrics server", "error", err)
+		}
+	}()
 	
 	// Start accepting connections
 	s.wg.Add(1)
@@ -539,10 +553,16 @@ func (s *Server) handleConnection(netConn net.Conn) {
 		}
 	}
 	
-	// Update metrics
+	// Update connection metrics
 	atomic.AddInt32(&s.activeConns, 1)
 	atomic.AddUint64(&s.totalConns, 1)
-	defer atomic.AddInt32(&s.activeConns, -1)
+	
+	// Update Prometheus metrics
+	s.prometheusMetrics.IncrementActiveConnections(s.instanceID)
+	defer func() {
+		atomic.AddInt32(&s.activeConns, -1)
+		s.prometheusMetrics.DecrementActiveConnections(s.instanceID)
+	}()
 	
 	// Configure TCP connection
 	if tcpConn, ok := netConn.(*net.TCPConn); ok {
@@ -612,23 +632,24 @@ func (s *Server) processConnection(conn *Connection) error {
 		// Send specific error codes for better observability
 		switch {
 		case errors.Is(err, auth.ErrRateLimited):
-			_ = conn.SendErrorCode(pb.ErrorCode_ERROR_CODE_RATE_LIMITED)
+			_ = conn.SendAuthError()
 			atomic.AddUint64(&s.authRateLimited, 1)
+			s.prometheusMetrics.IncrementAuthRateLimited()
 		case errors.Is(err, auth.ErrInvalidCredentials):
-			_ = conn.SendErrorCode(pb.ErrorCode_ERROR_CODE_INVALID_AUTH)
+			_ = conn.SendAuthError()
 			atomic.AddUint64(&s.authFailures, 1)
-		case errors.Is(err, auth.ErrAlreadyAuthenticated):
-			_ = conn.SendErrorCode(pb.ErrorCode_ERROR_CODE_ALREADY_AUTHENTICATED)
-			atomic.AddUint64(&s.authFailures, 1)
+			s.prometheusMetrics.IncrementAuthFailure(s.instanceID, "invalid_credentials")
 		default:
 			_ = conn.SendAuthError()
 			atomic.AddUint64(&s.authFailures, 1)
+			s.prometheusMetrics.IncrementAuthFailure(s.instanceID, "unknown")
 		}
 		return err
 	}
 	
 	// Authentication successful
 	atomic.AddUint64(&s.authSuccess, 1)
+	s.prometheusMetrics.IncrementAuthSuccess(s.instanceID)
 	conn.SetAuthenticated(session)
 	
 	// Send AUTH ACK
