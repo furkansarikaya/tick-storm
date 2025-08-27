@@ -1,0 +1,294 @@
+# Prometheus Alert Rules for TickStorm TCP Stream Server
+# These rules define when alerts should be triggered based on metrics
+
+groups:
+  # Heartbeat and Connection Health Alerts
+  - name: tickstorm.heartbeat
+    interval: 30s
+    rules:
+      # Heartbeat timeout rate exceeds threshold
+      - alert: TickStormHeartbeatTimeoutRate
+        expr: |
+          (
+            rate(tick_storm_heartbeat_timeouts_total[5m]) /
+            rate(tick_storm_heartbeats_recv_total[5m])
+          ) * 100 > 1
+        for: 2m
+        labels:
+          severity: critical
+          service: tickstorm
+          component: heartbeat
+        annotations:
+          summary: "TickStorm heartbeat timeout rate is {{ $value }}%"
+          description: "Heartbeat timeout rate has exceeded 1% for more than 2 minutes on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/heartbeat-timeouts"
+          dashboard_url: "{{ $externalURL }}/d/tickstorm-overview"
+
+      # High connection drop rate
+      - alert: TickStormConnectionDropRate
+        expr: |
+          (
+            rate(tick_storm_connection_errors_total{error_type="connection_dropped"}[5m]) /
+            rate(tick_storm_total_connections_total[5m])
+          ) * 100 > 0.5
+        for: 5m
+        labels:
+          severity: high
+          service: tickstorm
+          component: connection
+        annotations:
+          summary: "TickStorm connection drop rate is {{ $value }}%"
+          description: "Connection drop rate has exceeded 0.5% for more than 5 minutes on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/connection-drops"
+
+      # Service is down (no active connections and no new connections)
+      - alert: TickStormServiceDown
+        expr: |
+          tick_storm_active_connections == 0 and
+          rate(tick_storm_total_connections_total[5m]) == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: tickstorm
+          component: service
+        annotations:
+          summary: "TickStorm service appears to be down"
+          description: "No active connections and no new connections for 1 minute on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/service-down"
+
+  # Performance and Latency Alerts
+  - name: tickstorm.performance
+    interval: 30s
+    rules:
+      # Publish latency p95 exceeds 5ms
+      - alert: TickStormPublishLatencyHigh
+        expr: |
+          histogram_quantile(0.95, rate(tick_storm_publish_latency_seconds_bucket[5m])) * 1000 > 5
+        for: 3m
+        labels:
+          severity: high
+          service: tickstorm
+          component: performance
+        annotations:
+          summary: "TickStorm publish latency p95 is {{ $value }}ms"
+          description: "95th percentile publish latency has exceeded 5ms for more than 3 minutes on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/high-latency"
+
+      # Message processing duration p95 exceeds 2ms
+      - alert: TickStormMessageProcessingLatencyHigh
+        expr: |
+          histogram_quantile(0.95, rate(tick_storm_message_processing_duration_seconds_bucket[5m])) * 1000 > 2
+        for: 3m
+        labels:
+          severity: medium
+          service: tickstorm
+          component: performance
+        annotations:
+          summary: "TickStorm message processing latency p95 is {{ $value }}ms"
+          description: "95th percentile message processing duration has exceeded 2ms for more than 3 minutes on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/message-processing"
+
+      # Write timeout rate exceeds threshold
+      - alert: TickStormWriteTimeoutRate
+        expr: |
+          (
+            rate(tick_storm_write_timeouts_total[5m]) /
+            rate(tick_storm_messages_sent_total[5m])
+          ) * 100 > 0.1
+        for: 2m
+        labels:
+          severity: high
+          service: tickstorm
+          component: performance
+        annotations:
+          summary: "TickStorm write timeout rate is {{ $value }}%"
+          description: "Write timeout rate has exceeded 0.1% for more than 2 minutes on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/write-timeouts"
+
+  # Authentication Alerts
+  - name: tickstorm.authentication
+    interval: 30s
+    rules:
+      # Authentication failure rate exceeds threshold
+      - alert: TickStormAuthFailureRate
+        expr: |
+          (
+            rate(tick_storm_auth_failures_total[5m]) /
+            (rate(tick_storm_auth_success_total[5m]) + rate(tick_storm_auth_failures_total[5m]))
+          ) * 100 > 5
+        for: 3m
+        labels:
+          severity: high
+          service: tickstorm
+          component: authentication
+        annotations:
+          summary: "TickStorm authentication failure rate is {{ $value }}%"
+          description: "Authentication failure rate has exceeded 5% for more than 3 minutes on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/auth-failures"
+
+      # Authentication rate limiting exceeds threshold
+      - alert: TickStormAuthRateLimitedRate
+        expr: |
+          (
+            rate(tick_storm_auth_rate_limited_total[5m]) /
+            (rate(tick_storm_auth_success_total[5m]) + rate(tick_storm_auth_failures_total[5m]) + rate(tick_storm_auth_rate_limited_total[5m]))
+          ) * 100 > 2
+        for: 5m
+        labels:
+          severity: medium
+          service: tickstorm
+          component: authentication
+        annotations:
+          summary: "TickStorm authentication rate limiting is {{ $value }}%"
+          description: "Authentication rate limiting has exceeded 2% for more than 5 minutes on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/auth-rate-limiting"
+
+  # Resource Usage Alerts
+  - name: tickstorm.resources
+    interval: 30s
+    rules:
+      # Memory usage exceeds threshold
+      - alert: TickStormMemoryUsageHigh
+        expr: |
+          (tick_storm_memory_usage_bytes / (1024 * 1024 * 1024)) > 0.8
+        for: 5m
+        labels:
+          severity: high
+          service: tickstorm
+          component: resources
+        annotations:
+          summary: "TickStorm memory usage is {{ $value }}GB"
+          description: "Memory usage has exceeded 800MB for more than 5 minutes on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/high-memory"
+
+      # Goroutine count exceeds threshold
+      - alert: TickStormGoroutineCountHigh
+        expr: |
+          tick_storm_goroutines > 10000
+        for: 5m
+        labels:
+          severity: medium
+          service: tickstorm
+          component: resources
+        annotations:
+          summary: "TickStorm goroutine count is {{ $value }}"
+          description: "Goroutine count has exceeded 10,000 for more than 5 minutes on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/high-goroutines"
+
+      # Active connections near capacity
+      - alert: TickStormActiveConnectionsNearCapacity
+        expr: |
+          tick_storm_active_connections > 90000
+        for: 2m
+        labels:
+          severity: high
+          service: tickstorm
+          component: capacity
+        annotations:
+          summary: "TickStorm active connections is {{ $value }}"
+          description: "Active connections have exceeded 90,000 (90% of capacity) for more than 2 minutes on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/capacity-planning"
+
+  # Error Rate Alerts
+  - name: tickstorm.errors
+    interval: 30s
+    rules:
+      # Overall error rate exceeds threshold
+      - alert: TickStormErrorRate
+        expr: |
+          (
+            sum(rate(tick_storm_errors_total[5m])) /
+            sum(rate(tick_storm_total_connections_total[5m]))
+          ) * 100 > 1
+        for: 3m
+        labels:
+          severity: high
+          service: tickstorm
+          component: errors
+        annotations:
+          summary: "TickStorm error rate is {{ $value }}%"
+          description: "Overall error rate has exceeded 1% for more than 3 minutes on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/error-rate"
+
+      # Protocol error rate exceeds threshold
+      - alert: TickStormProtocolErrorRate
+        expr: |
+          (
+            rate(tick_storm_protocol_errors_total[5m]) /
+            rate(tick_storm_messages_recv_total[5m])
+          ) * 100 > 0.5
+        for: 3m
+        labels:
+          severity: medium
+          service: tickstorm
+          component: protocol
+        annotations:
+          summary: "TickStorm protocol error rate is {{ $value }}%"
+          description: "Protocol error rate has exceeded 0.5% for more than 3 minutes on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/protocol-errors"
+
+  # Business Metrics Alerts
+  - name: tickstorm.business
+    interval: 60s
+    rules:
+      # Message throughput below threshold
+      - alert: TickStormMessageThroughputLow
+        expr: |
+          rate(tick_storm_messages_sent_total[5m]) < 10000
+        for: 10m
+        labels:
+          severity: medium
+          service: tickstorm
+          component: business
+        annotations:
+          summary: "TickStorm message throughput is {{ $value }} msg/s"
+          description: "Message throughput has fallen below 10,000 msg/s for more than 10 minutes on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/low-throughput"
+
+      # No messages sent (potential issue)
+      - alert: TickStormNoMessagesSent
+        expr: |
+          rate(tick_storm_messages_sent_total[10m]) == 0 and
+          tick_storm_active_connections > 0
+        for: 5m
+        labels:
+          severity: high
+          service: tickstorm
+          component: business
+        annotations:
+          summary: "TickStorm is not sending any messages"
+          description: "No messages have been sent for 5 minutes despite having {{ $value }} active connections on instance {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tickstorm.io/no-messages"
+
+  # Instance Health Alerts
+  - name: tickstorm.instance
+    interval: 30s
+    rules:
+      # Instance is unreachable
+      - alert: TickStormInstanceDown
+        expr: |
+          up{job="tickstorm"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: tickstorm
+          component: instance
+        annotations:
+          summary: "TickStorm instance is down"
+          description: "TickStorm instance {{ $labels.instance }} has been unreachable for more than 1 minute"
+          runbook_url: "https://runbooks.tickstorm.io/instance-down"
+
+      # Metrics scrape failures
+      - alert: TickStormMetricsScrapeFailure
+        expr: |
+          up{job="tickstorm"} == 0 or
+          increase(prometheus_target_scrapes_exceeded_sample_limit_total[5m]) > 0
+        for: 3m
+        labels:
+          severity: medium
+          service: tickstorm
+          component: monitoring
+        annotations:
+          summary: "TickStorm metrics scraping is failing"
+          description: "Prometheus cannot scrape metrics from TickStorm instance {{ $labels.instance }} for more than 3 minutes"
+          runbook_url: "https://runbooks.tickstorm.io/metrics-scraping"

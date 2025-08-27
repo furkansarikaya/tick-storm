@@ -1,0 +1,201 @@
+# TickStorm SLO/SLA Thresholds Configuration
+# This file defines Service Level Objectives (SLOs) and Service Level Agreements (SLAs)
+# for the TickStorm TCP stream server monitoring and alerting system.
+
+slo_definitions:
+  # Performance SLOs
+  performance:
+    # Publish latency - 95th percentile should be under 5ms
+    publish_latency_p95:
+      threshold: 5ms
+      severity: high
+      description: "95th percentile publish latency exceeds 5ms"
+      sla_target: 99.9%
+      measurement_window: 5m
+      
+    # Connection establishment latency
+    connection_latency_p95:
+      threshold: 1ms
+      severity: medium
+      description: "95th percentile connection establishment latency exceeds 1ms"
+      sla_target: 99.5%
+      measurement_window: 5m
+      
+    # Message processing duration
+    message_processing_p95:
+      threshold: 2ms
+      severity: medium
+      description: "95th percentile message processing duration exceeds 2ms"
+      sla_target: 99.0%
+      measurement_window: 5m
+
+  # Availability SLOs
+  availability:
+    # Heartbeat timeout rate
+    heartbeat_timeout_rate:
+      threshold: 1%
+      severity: critical
+      description: "Heartbeat timeout rate exceeds 1%"
+      sla_target: 99.9%
+      measurement_window: 10m
+      
+    # Connection drop rate
+    connection_drop_rate:
+      threshold: 0.5%
+      severity: high
+      description: "Connection drop rate exceeds 0.5%"
+      sla_target: 99.5%
+      measurement_window: 10m
+      
+    # Service uptime
+    service_uptime:
+      threshold: 99.9%
+      severity: critical
+      description: "Service uptime falls below 99.9%"
+      sla_target: 99.9%
+      measurement_window: 24h
+
+  # Authentication SLOs
+  authentication:
+    # Authentication failure rate
+    auth_failure_rate:
+      threshold: 5%
+      severity: high
+      description: "Authentication failure rate exceeds 5%"
+      sla_target: 95.0%
+      measurement_window: 5m
+      
+    # Authentication rate limiting
+    auth_rate_limited_rate:
+      threshold: 2%
+      severity: medium
+      description: "Authentication rate limiting exceeds 2%"
+      sla_target: 98.0%
+      measurement_window: 5m
+
+  # Resource SLOs
+  resources:
+    # Memory usage
+    memory_usage:
+      threshold: 80%
+      severity: high
+      description: "Memory usage exceeds 80%"
+      sla_target: 95.0%
+      measurement_window: 5m
+      
+    # CPU usage
+    cpu_usage:
+      threshold: 70%
+      severity: medium
+      description: "CPU usage exceeds 70%"
+      sla_target: 95.0%
+      measurement_window: 5m
+      
+    # Goroutine count
+    goroutine_count:
+      threshold: 10000
+      severity: medium
+      description: "Goroutine count exceeds 10,000"
+      sla_target: 99.0%
+      measurement_window: 5m
+      
+    # File descriptor usage
+    file_descriptor_usage:
+      threshold: 80%
+      severity: high
+      description: "File descriptor usage exceeds 80%"
+      sla_target: 95.0%
+      measurement_window: 5m
+
+  # Error Rate SLOs
+  errors:
+    # Overall error rate
+    error_rate:
+      threshold: 1%
+      severity: high
+      description: "Overall error rate exceeds 1%"
+      sla_target: 99.0%
+      measurement_window: 5m
+      
+    # Protocol error rate
+    protocol_error_rate:
+      threshold: 0.5%
+      severity: medium
+      description: "Protocol error rate exceeds 0.5%"
+      sla_target: 99.5%
+      measurement_window: 5m
+      
+    # Write timeout rate
+    write_timeout_rate:
+      threshold: 0.1%
+      severity: high
+      description: "Write timeout rate exceeds 0.1%"
+      sla_target: 99.9%
+      measurement_window: 5m
+
+  # Business SLOs
+  business:
+    # Active connections capacity
+    active_connections_capacity:
+      threshold: 90%  # 90% of max connections (90k out of 100k)
+      severity: high
+      description: "Active connections exceed 90% of capacity"
+      sla_target: 95.0%
+      measurement_window: 5m
+      
+    # Message throughput
+    message_throughput:
+      threshold: 10000  # messages per second
+      severity: medium
+      description: "Message throughput falls below 10,000 msg/s"
+      sla_target: 99.0%
+      measurement_window: 5m
+
+# Alert Severity Levels
+severity_levels:
+  critical:
+    escalation_time: 0m  # Immediate
+    notification_channels: ["pagerduty", "slack", "email"]
+    auto_escalate: true
+    
+  high:
+    escalation_time: 5m
+    notification_channels: ["slack", "email"]
+    auto_escalate: true
+    
+  medium:
+    escalation_time: 15m
+    notification_channels: ["slack"]
+    auto_escalate: false
+    
+  low:
+    escalation_time: 60m
+    notification_channels: ["email"]
+    auto_escalate: false
+
+# SLA Targets by Environment
+environment_slas:
+  production:
+    availability: 99.9%
+    performance_p95: 5ms
+    error_rate: 0.1%
+    
+  staging:
+    availability: 99.5%
+    performance_p95: 10ms
+    error_rate: 1.0%
+    
+  development:
+    availability: 99.0%
+    performance_p95: 20ms
+    error_rate: 5.0%
+
+# Measurement Windows
+measurement_windows:
+  real_time: 1m
+  short_term: 5m
+  medium_term: 15m
+  long_term: 1h
+  daily: 24h
+  weekly: 7d
+  monthly: 30d

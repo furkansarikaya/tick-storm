@@ -1,0 +1,256 @@
+# Alertmanager configuration for TickStorm TCP Stream Server
+# This configuration defines routing, notification channels, and alert handling
+
+global:
+  # Default SMTP configuration
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'alerts@tickstorm.io'
+  smtp_auth_username: 'alerts@tickstorm.io'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+  
+  # Default Slack configuration
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+  
+  # Default PagerDuty configuration
+  pagerduty_url: 'https://events.pagerduty.com/v2/enqueue'
+
+# Templates for alert notifications
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Main routing configuration
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+  receiver: 'default-receiver'
+  
+  routes:
+    # Critical alerts - immediate PagerDuty + Slack + Email
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 0s
+      group_interval: 5m
+      repeat_interval: 5m
+      continue: false
+      
+    # High severity alerts - Slack + Email
+    - match:
+        severity: high
+      receiver: 'high-alerts'
+      group_wait: 5m
+      group_interval: 10m
+      repeat_interval: 1h
+      continue: false
+      
+    # Medium severity alerts - Slack only
+    - match:
+        severity: medium
+      receiver: 'medium-alerts'
+      group_wait: 15m
+      group_interval: 30m
+      repeat_interval: 6h
+      continue: false
+      
+    # Low severity alerts - Email only
+    - match:
+        severity: low
+      receiver: 'low-alerts'
+      group_wait: 1h
+      group_interval: 2h
+      repeat_interval: 24h
+      continue: false
+      
+    # Service-specific routing
+    - match:
+        service: tickstorm
+      receiver: 'tickstorm-alerts'
+      routes:
+        # Authentication alerts
+        - match:
+            alertname: TickStormAuthFailureRate
+          receiver: 'auth-alerts'
+          
+        # Performance alerts
+        - match_re:
+            alertname: TickStorm(Latency|Performance).*
+          receiver: 'performance-alerts'
+          
+        # Resource alerts
+        - match_re:
+            alertname: TickStorm(Memory|CPU|Goroutine).*
+          receiver: 'resource-alerts'
+
+# Inhibition rules - suppress lower priority alerts when higher priority ones are firing
+inhibit_rules:
+  # Suppress low/medium alerts when critical alerts are firing
+  - source_match:
+      severity: critical
+    target_match_re:
+      severity: (high|medium|low)
+    equal: ['alertname', 'cluster', 'service']
+    
+  # Suppress medium/low alerts when high alerts are firing
+  - source_match:
+      severity: high
+    target_match_re:
+      severity: (medium|low)
+    equal: ['alertname', 'cluster', 'service']
+    
+  # Suppress connection alerts when service is down
+  - source_match:
+      alertname: TickStormServiceDown
+    target_match_re:
+      alertname: TickStorm(Connection|Heartbeat).*
+    equal: ['instance']
+
+# Notification receivers
+receivers:
+  # Default receiver
+  - name: 'default-receiver'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#alerts'
+        title: 'TickStorm Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        
+  # Critical alerts - PagerDuty + Slack + Email
+  - name: 'critical-alerts'
+    pagerduty_configs:
+      - routing_key: '${PAGERDUTY_ROUTING_KEY}'
+        description: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        details:
+          severity: '{{ .GroupLabels.severity }}'
+          service: '{{ .GroupLabels.service }}'
+          instance: '{{ .GroupLabels.instance }}'
+          runbook: '{{ range .Alerts }}{{ .Annotations.runbook_url }}{{ end }}'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#critical-alerts'
+        color: 'danger'
+        title: '🚨 CRITICAL: TickStorm Alert'
+        text: |
+          *Alert:* {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          *Severity:* {{ .GroupLabels.severity }}
+          *Service:* {{ .GroupLabels.service }}
+          *Instance:* {{ .GroupLabels.instance }}
+          *Runbook:* {{ range .Alerts }}{{ .Annotations.runbook_url }}{{ end }}
+        actions:
+          - type: button
+            text: 'View Runbook'
+            url: '{{ range .Alerts }}{{ .Annotations.runbook_url }}{{ end }}'
+          - type: button
+            text: 'View Grafana'
+            url: '${GRAFANA_URL}/d/tickstorm-overview'
+    email_configs:
+      - to: '${ONCALL_EMAIL}'
+        subject: '🚨 CRITICAL: TickStorm Alert - {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        body: |
+          Critical alert fired for TickStorm service.
+          
+          Alert: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          Description: {{ range .Alerts }}{{ .Annotations.description }}{{ end }}
+          Severity: {{ .GroupLabels.severity }}
+          Service: {{ .GroupLabels.service }}
+          Instance: {{ .GroupLabels.instance }}
+          
+          Runbook: {{ range .Alerts }}{{ .Annotations.runbook_url }}{{ end }}
+          Grafana: ${GRAFANA_URL}/d/tickstorm-overview
+          
+          Please investigate immediately.
+          
+  # High severity alerts - Slack + Email
+  - name: 'high-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#alerts'
+        color: 'warning'
+        title: '⚠️ HIGH: TickStorm Alert'
+        text: |
+          *Alert:* {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          *Severity:* {{ .GroupLabels.severity }}
+          *Service:* {{ .GroupLabels.service }}
+          *Instance:* {{ .GroupLabels.instance }}
+          *Runbook:* {{ range .Alerts }}{{ .Annotations.runbook_url }}{{ end }}
+    email_configs:
+      - to: '${TEAM_EMAIL}'
+        subject: '⚠️ HIGH: TickStorm Alert - {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        body: |
+          High severity alert for TickStorm service.
+          
+          Alert: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          Description: {{ range .Alerts }}{{ .Annotations.description }}{{ end }}
+          Severity: {{ .GroupLabels.severity }}
+          Service: {{ .GroupLabels.service }}
+          Instance: {{ .GroupLabels.instance }}
+          
+          Runbook: {{ range .Alerts }}{{ .Annotations.runbook_url }}{{ end }}
+          Grafana: ${GRAFANA_URL}/d/tickstorm-overview
+          
+  # Medium severity alerts - Slack only
+  - name: 'medium-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#alerts'
+        color: 'good'
+        title: 'ℹ️ MEDIUM: TickStorm Alert'
+        text: |
+          *Alert:* {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          *Service:* {{ .GroupLabels.service }}
+          *Instance:* {{ .GroupLabels.instance }}
+          
+  # Low severity alerts - Email only
+  - name: 'low-alerts'
+    email_configs:
+      - to: '${TEAM_EMAIL}'
+        subject: 'TickStorm Info - {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        body: |
+          Informational alert for TickStorm service.
+          
+          Alert: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          Description: {{ range .Alerts }}{{ .Annotations.description }}{{ end }}
+          Service: {{ .GroupLabels.service }}
+          Instance: {{ .GroupLabels.instance }}
+          
+  # Service-specific receivers
+  - name: 'tickstorm-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#tickstorm-alerts'
+        title: 'TickStorm Service Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        
+  - name: 'auth-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#tickstorm-auth'
+        color: 'warning'
+        title: '🔐 TickStorm Authentication Alert'
+        text: |
+          *Alert:* {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          *Instance:* {{ .GroupLabels.instance }}
+          *Runbook:* https://runbooks.tickstorm.io/auth-failures
+          
+  - name: 'performance-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#tickstorm-performance'
+        color: 'warning'
+        title: '⚡ TickStorm Performance Alert'
+        text: |
+          *Alert:* {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          *Instance:* {{ .GroupLabels.instance }}
+          *Runbook:* https://runbooks.tickstorm.io/performance
+          
+  - name: 'resource-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#tickstorm-resources'
+        color: 'warning'
+        title: '💾 TickStorm Resource Alert'
+        text: |
+          *Alert:* {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          *Instance:* {{ .GroupLabels.instance }}
+          *Runbook:* https://runbooks.tickstorm.io/resources
